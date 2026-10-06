@@ -44,6 +44,9 @@ ipython_config.py
 *.sqlite3
 *.db
 
+# Local vector store — rebuilt and re-embedded by the seed script
+chroma-data/
+
 # Editors and IDEs
 .vscode/
 .idea/

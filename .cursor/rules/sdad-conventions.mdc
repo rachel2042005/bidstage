@@ -1,0 +1,59 @@
+---
+description: SDAD methodology — specification-first development and spec/code traceability
+globs: specs/**/*.md, docs/**/*.md
+alwaysApply: false
+---
+
+# Specification first
+
+Specifications are written and agreed **before** code. Code does not introduce behaviour that no spec describes.
+
+Document set, all under `specs/`:
+
+| File | Owns |
+| --- | --- |
+| `00-overview.md` | Project definition, settled decisions, environment constraints |
+| `01-requirements.md` | Functional and non-functional requirements, each with an ID |
+| `02-architecture.md` | Processes, layering, event store DDL, interfaces |
+| `03-domain-events.md` | Event catalogue, payloads, ordering invariants |
+| `04-scoring-model.md` | Formulas, rubric bands, worked examples |
+| `05-agent-spec.md` | Orchestrator, sub-agents, tool contracts |
+| `06-tests.md` | Test plan, traceable back to requirement IDs |
+
+# Traceability
+
+Every new feature, command or query needs, before implementation:
+
+1. An acceptance criterion with an ID in `01-requirements.md` (`FR-*` or `NFR-*`).
+2. Its domain event in `03-domain-events.md`, with payload fields and preconditions, plus any new ordering invariant (`INV-*`).
+3. A test ID in `06-tests.md` referencing that requirement.
+
+Use the existing ID conventions: `FR-AREA-n`, `NFR-AREA-n`, `ENV-n`, `INV-n`, `T-AREA-n`. Reference IDs in docstrings so code points back at the spec it satisfies.
+
+**When code must deviate from a spec, update the spec in the same change.** A spec that no longer describes the code is worse than no spec. Record *why* the deviation was necessary, as with `GlobalSeq` in `02-architecture.md` §5.
+
+Events are append-only in the catalogue too: add new types, never rename or repurpose an existing one, because history already written under that name must stay readable.
+
+# What is data, and what is a closed set
+
+Per-tender configuration is **data**, never hardcoded:
+
+- Which requirement types a given tender uses, and how many
+- Each requirement's weight, threshold flag and description
+- α, the quality-versus-price ratio
+
+```python
+# ❌ BAD — tender-specific values baked into code
+VENUE_WEIGHT = 25
+ALPHA = 0.6
+
+# ✅ GOOD — read from the tender aggregate
+for requirement in tender.requirements:
+    weighted += requirement.weight * scores[requirement.id]
+```
+
+The **requirement type taxonomy is deliberately closed** at five: `VENUE`, `CONTENT`, `HOST`, `MUSIC`, `EXPERIENCE`. Each type binds to exactly one sub-agent and one rubric document, so an unrecognized type has nothing to score it with. Treat it as an enum and reject unknown values rather than defaulting.
+
+Adding a sixth type is a deliberate spec change, not a runtime concern: it requires a rubric in `knowledge_base/rubrics/`, a sub-agent in `agent/subagents/`, requirement and test IDs, and an update to `00-overview.md` §3. This is exactly what the project's "add a new requirement type" Skill documents.
+
+Weights must sum to exactly 100% per tender before publication. The quality floor of 60 is system-wide and must not become per-tender, so it cannot be moved once bids are visible.
