@@ -59,42 +59,63 @@ Gmail is driven by the web process, not the agent, so notifications are tied to 
 MVC supplies the outer shell; CQRS splits the middle.
 
 ```
-templates/ + static/          ← View      (Jinja2, Bootstrap 5 RTL)
-app/controllers/              ← Controller (thin: parse, authorize, dispatch)
+app/templates/ + app/static/  ← View       (Jinja2, Bootstrap 5 RTL)
+app/routes/                   ← Controller (thin: parse, authorize, dispatch)
         │
         ├── app/commands/     ← write side: validate, append events, project
         └── app/queries/      ← read side: SELECT from read models only
                 │
-app/domain/                   ← aggregates, events, invariants (no I/O)
-app/infrastructure/           ← event store, read models, vector store, MCP clients
+app/domain/                   ← aggregates, invariants, scoring (no I/O)
+app/events/                   ← event definitions + event store
+app/projections/              ← read models built from events
 ```
 
 Controllers contain no business logic. They authorize, build a command or query object, dispatch it, and render. A controller that computes a score or decides a disqualification is a defect.
 
-`app/domain/` has no imports from `app/infrastructure/`. Aggregates are pure functions over event lists, which is what makes `NFR-ES-3` and the unit tests in `06-tests.md` cheap.
+`app/domain/` imports nothing that performs I/O. Aggregates are pure functions over event lists, which is what makes `NFR-ES-3` and the unit tests in `06-tests.md` cheap.
 
 ### Folder layout
 
+As built in Phase 2:
+
 ```
-main.py                       # web entry point
+main.py                       # web entry point — bootstrap.init() runs first
+init_db.py                    # idempotent events table creation
+requirements.txt
+pytest.ini
+.env / .env.example
+app/
+  bootstrap.py                # truststore injection + dotenv (ENV-1)
+  config.py                   # Settings from .env
+  commands/                   # write side
+  queries/                    # read side
+  events/
+    __init__.py               # re-exports EventStore, NewEvent, StoredEvent
+    db.py                     # pyodbc connection + transaction()
+    schema.py                 # events DDL and introspection
+    event_store.py            # append-only EventStore
+    event_types.py            # event name constants
+  projections/                # read models, incl. rm_bid_for_assessment
+  routes/                     # Flask blueprints
+  domain/                     # Phase 3: aggregates, scoring
+  templates/base.html         # Hebrew RTL shell
+  static/css/app.css
 agent/
   runner.py                   # poll loop + Evaluate Now consumer
-  orchestrator.py             # Deep Agent planner
-  subagents/                  # one per requirement type
-  tools/                      # FastMCP tool definitions
-app/
-  controllers/
-  commands/
-  queries/
-  domain/
-    tender.py  bid.py  events.py  scoring.py
-  infrastructure/
-    event_store.py  read_models.py  vector_store.py  mcp/
-  templates/  static/
+  orchestrator.py             # Phase 4: Deep Agent planner
+  subagents/                  # Phase 4: one per requirement type
+mcp_server/
+  server.py                   # the two own FastMCP tools
+knowledge_base/
+  rubrics/  regulations/      # embedded by the seed script
 scripts/
-  seed.py                     # rebuilds SQL + Chroma (ENV-6)
+  seed.py                     # Phase 3: rebuilds SQL + Chroma (ENV-6)
+tests/
+  smoke_test_event_store.py
 specs/
 ```
+
+The FastMCP tools live in a top-level `mcp_server/` rather than under `agent/`, because they are a boundary the agent consumes rather than a part of it.
 
 ---
 
@@ -108,7 +129,7 @@ Controller
   → CommandHandler
       1. load aggregate by replaying its stream
       2. check invariants           → reject on violation
-      3. append new event(s)        → UNIQUE(StreamId, Version) guards concurrency
+      3. append new event(s)        → UNIQUE(stream_id, version) guards concurrency
       4. project affected read models   (same transaction)
       5. enqueue side effects           (email; after commit)
   → redirect / render
@@ -153,20 +174,41 @@ One further projection serves no query: `rm_bid_for_assessment` is the agent's w
 One append-only table (`NFR-ES-1`, `NFR-ES-2`).
 
 ```sql
-CREATE TABLE Events (
-    StreamId    UNIQUEIDENTIFIER NOT NULL,
-    Version     INT              NOT NULL,
-    EventType   VARCHAR(64)      NOT NULL,
-    PayloadJson NVARCHAR(MAX)    NOT NULL,
-    OccurredAt  DATETIME2        NOT NULL,
-    CONSTRAINT PK_Events PRIMARY KEY (StreamId, Version)
+CREATE TABLE dbo.events (
+    global_seq  BIGINT IDENTITY(1,1) NOT NULL,
+    event_id    UNIQUEIDENTIFIER     NOT NULL,
+    stream_id   VARCHAR(100)         NOT NULL,
+    version     INT                  NOT NULL,
+    event_type  VARCHAR(100)         NOT NULL,
+    event_data  NVARCHAR(MAX)        NOT NULL,
+    metadata    NVARCHAR(MAX)        NULL,
+    created_at  DATETIME2            NOT NULL
+        CONSTRAINT df_events_created_at DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT pk_events PRIMARY KEY CLUSTERED (global_seq),
+    CONSTRAINT uq_events_event_id UNIQUE (event_id),
+    CONSTRAINT uq_events_stream_version UNIQUE (stream_id, version),
+    CONSTRAINT ck_events_version_positive CHECK (version > 0)
 );
-CREATE INDEX IX_Events_Type ON Events (EventType);
+CREATE INDEX ix_events_event_type ON dbo.events (event_type);
 ```
 
-`PRIMARY KEY (StreamId, Version)` is also the optimistic-concurrency mechanism (`NFR-ES-4`): a handler computes the next version from what it replayed, and a concurrent writer that computed the same version fails on insert and retries. No locking, no version column elsewhere.
+Naming is snake_case throughout and the table is `dbo.events`.
 
-`NVARCHAR(MAX)` is required rather than `VARCHAR`, because payloads carry Hebrew text.
+`UNIQUE (stream_id, version)` is the optimistic-concurrency mechanism (`NFR-ES-4`): a handler computes the next version from what it replayed, and a concurrent writer that computed the same version fails on insert and retries. No locking, no version column elsewhere. `EventStore` translates that constraint violation into `ConcurrencyError`.
+
+`event_id` is a client-generated UUID, unique across the table, serving as the idempotency key. A writer that times out and retries may reuse the same `event_id`; the duplicate is rejected as `DuplicateEventError` rather than written twice. This is the mechanism behind `submit_requirement_score` being idempotent on `(bid_id, requirement_id)`.
+
+`metadata` carries cross-cutting context — acting user, role, correlation id — kept separate from the domain payload in `event_data`. Domain fields stay in `event_data`; see `03-domain-events.md` §6.
+
+`global_seq` is load-bearing, not decorative. Rebuilding read models needs a total order *across* streams: `version` orders only within a stream, and `created_at` ties when two events share a timestamp. The identity column is the only unambiguous global append order, and `read_all()` pages through it.
+
+`created_at` defaults to `SYSUTCDATETIME()`, so the timestamp comes from the database rather than from whichever process wrote the row. That keeps the audit trail free of client clock skew.
+
+`NVARCHAR(MAX)` is required rather than `VARCHAR` for `event_data` and `metadata`, because payloads carry Hebrew text.
+
+### Module layout
+
+`app/events/event_store.py` holds `EventStore` — `append`, `append_many`, `read_stream`, `read_all`, `last_version` — with `db.py` for connections, `schema.py` for DDL and introspection, and `event_types.py` for event-name constants.
 
 **Size.** Somee's free tier allows 30 MB (`ENV-2`). A tender with five requirements and four bids produces roughly 45 events; justifications dominate the payload at ~1–2 KB each, so a complete tender costs well under 100 KB. The cap permits hundreds of tenders, provided embeddings stay out (`ENV-3`).
 

@@ -1,0 +1,12 @@
+# Phase 2 — skeleton and event store
+python-dotenv==1.0.1
+truststore==0.10.1
+pyodbc==5.2.0
+Flask==3.1.0
+pytest==8.3.4
+
+# Later phases (uncomment when the phase begins)
+# openai
+# chromadb
+# deepagents
+# fastmcp
