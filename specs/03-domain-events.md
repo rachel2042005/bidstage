@@ -85,7 +85,7 @@ state = reduce(apply, events_ordered_by_version, initial_state)
 - An unrecognized `EventType` raises rather than being skipped. Silent skipping turns a deploy mistake into quiet data loss.
 - Replay never consults a read model.
 - Replaying the same stream twice yields identical state.
-- Read models are rebuildable: truncate and replay all streams in `(OccurredAt, StreamId, Version)` order.
+- Read models are rebuildable: truncate and replay all streams in `global_seq` order, the store's total append order across streams.
 
 The seed script (`ENV-6`) uses exactly this path, which is why a Somee deletion (`ENV-2`) costs minutes.
 
@@ -122,7 +122,8 @@ Read models store the derived status as a column for query speed; that column is
 
 ## 6. Payload conventions
 
-- `PayloadJson` is a JSON object, never a bare scalar, so fields can be added without a migration.
+- `event_data` is a JSON object, never a bare scalar, so fields can be added without a migration.
+- `metadata` is a separate nullable JSON column for cross-cutting context — `actor`, `actor_role`, `correlation_id`. Domain facts belong in `event_data`; who did it and which request it belonged to belong in `metadata`. The `scored_by`, `selected_by` and `overridden_by` fields listed in §2 stay in `event_data`, because *who scored it* is part of the domain fact, not request plumbing.
 - Money is an integer minor unit plus a currency code. No floats.
 - Timestamps are UTC ISO-8601; the Hebrew UI localizes on render.
 - Hebrew text is stored as-is in `NVARCHAR(MAX)`, unescaped and unnormalized.

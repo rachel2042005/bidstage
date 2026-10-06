@@ -1,0 +1,23 @@
+/* Hebrew RTL overrides on top of bootstrap.rtl.min.css (NFR-UI-1). */
+
+body {
+  font-family: "Segoe UI", "Arial Hebrew", Arial, sans-serif;
+}
+
+/* Prices, scores and dates stay LTR inside RTL text so digits and currency
+   render in the expected order. */
+.ltr-numeric {
+  direction: ltr;
+  unicode-bidi: embed;
+  display: inline-block;
+}
+
+.price-sealed {
+  font-style: italic;
+  color: #6c757d;
+}
+
+.bid-disqualified {
+  opacity: 0.6;
+  text-decoration: line-through;
+}

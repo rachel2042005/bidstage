@@ -195,10 +195,13 @@ A single append-only table:
 | Column | Purpose |
 | --- | --- |
 | `StreamId` | Aggregate identity (tender or bid) |
-| `Version` | Monotonic position within the stream |
-| `EventType` | Discriminator |
-| `PayloadJson` | Event body |
-| `OccurredAt` | Timestamp |
+| `version` | Monotonic position within the stream |
+| `event_type` | Discriminator |
+| `event_data` | Event body |
+| `metadata` | Cross-cutting context: actor, role, correlation id |
+| `created_at` | Timestamp, defaulted by the database |
+| `event_id` | Client-generated UUID; idempotency key |
+| `global_seq` | Total append order across streams, for projection rebuilds |
 
 `UNIQUE (StreamId, Version)` is the concurrency control: two writers racing on the same aggregate collide on the constraint, giving optimistic concurrency without extra machinery. Nothing in the system issues an `UPDATE` against this table.
 
