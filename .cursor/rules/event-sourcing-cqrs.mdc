@@ -1,0 +1,69 @@
+---
+description: Event Sourcing, CQRS separation, double-envelope secrecy and deterministic pricing for BidStage
+globs: app/**/*.py, agent/**/*.py, specs/**/*.md
+alwaysApply: true
+---
+
+# Event Sourcing
+
+State changes happen **only** by appending an immutable event. Never `UPDATE` or `DELETE` business state.
+
+```python
+# ❌ BAD — mutates history
+cursor.execute("UPDATE Events SET PayloadJson = ? WHERE StreamId = ?", ...)
+cursor.execute("UPDATE Bids SET quality_score = ?", ...)
+
+# ✅ GOOD — append; the correction is itself an event
+store.append(bid_id, expected_version, SCORE_OVERRIDDEN, {
+    "requirement_id": rid, "old_score": 7, "new_score": 9,
+    "justification": "...", "overridden_by": organizer_id,
+})
+```
+
+A correction is a new compensating event, never an edit. `ScoreOverridden` supersedes a `RequirementScored`; it does not rewrite it. Both stay visible.
+
+Rebuild state by replaying the stream in `Version` order, or read a projection. `Version` increments by exactly 1 per stream; concurrency is enforced by `UNIQUE (StreamId, Version)` surfacing as `ConcurrencyError`.
+
+Unknown `EventType` during replay must raise, never be skipped silently.
+
+# CQRS
+
+| Side | Location | Allowed |
+| --- | --- | --- |
+| Command | `app/commands/` | Validate invariants, append events, project read models. Returns success or an ID — never a domain payload |
+| Query | `app/queries/` | `SELECT` from `app/projections/` models only. Never mutates, never emits |
+
+```python
+# ❌ BAD — query handler reading the event stream
+def get_bid_comparison(tender_id):
+    return EventStore(conn).read_stream(tender_id)
+
+# ✅ GOOD — query handler reading its projection
+def get_bid_comparison(tender_id):
+    return conn.execute(SELECT_FROM_RM_BID_RANKING, tender_id).fetchall()
+```
+
+Event append and projection share one transaction, so a read model can never reflect a rolled-back event.
+
+# Double envelope
+
+The agent must never be able to read a price. This is structural, not a convention: `rm_bid_for_assessment` has **no price column**, and price lives only in the `PriceOfferSealed` payload.
+
+- Never add a price field to `rm_bid_for_assessment`, to `get_tender_requirements`, or to any agent prompt.
+- `PricesRevealed` is emitted by the web process only — never the agent.
+- Emit `PricesRevealed` only once **every** bid in the tender is terminal (`QualityAssessmentCompleted` *or* `BidDisqualified`). One unassessed bid blocks reveal. Revealing after a single bid's assessment would leak prices while others are still being scored.
+- No `RequirementScored` may be appended after `PricesRevealed`.
+
+# Deterministic pricing
+
+Price and final scores are computed in Python only. No LLM participates in arithmetic.
+
+```python
+# Lowest price among QUALIFIED bids only — those that passed every threshold
+# requirement AND met the quality floor of 60. A disqualified bid never
+# influences another bid's price score, even if its price was lowest.
+price_score = (lowest_qualified_price / bid_price) * 100
+final_score = alpha * quality + (1 - alpha) * price_score
+```
+
+The agent contributes only integer 0–10 scores per requirement with justification and sources. Quality aggregation, threshold checks, the floor, price scoring and ranking all live in `app/domain/scoring.py`, which makes no network calls.

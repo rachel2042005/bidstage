@@ -1,0 +1,62 @@
+---
+description: TLS trust via truststore on the Netspark-filtered network, and Chroma process safety
+globs: *.py, app/**/*.py, agent/**/*.py, mcp_server/**/*.py, scripts/**/*.py, tests/**/*.py
+alwaysApply: true
+---
+
+# TLS trust
+
+This network runs a Netspark filtering proxy that re-signs HTTPS. Python's bundled CA set rejects it with `CERTIFICATE_VERIFY_FAILED: Missing Authority Key Identifier`, so **`api.openai.com` is unreachable by default**. Routing verification through the Windows trust store fixes it.
+
+Every entry point calls `bootstrap.init()` as its **first** statement, before any client object exists:
+
+```python
+# ✅ GOOD — injection precedes every import that may build a client
+from app import bootstrap
+
+bootstrap.init()
+
+from openai import OpenAI  # noqa: E402
+client = OpenAI()
+```
+
+```python
+# ❌ BAD — client constructed before injection; the fix has no effect
+from openai import OpenAI
+client = OpenAI()
+
+import truststore
+truststore.inject_into_ssl()
+```
+
+`app/bootstrap.py` is idempotent, so call it freely from new entry points. Never call `truststore.inject_into_ssl()` directly elsewhere, and never work around a certificate error with `verify=False`, `strict-ssl false`, or a custom unverified `SSLContext`.
+
+Affected clients: OpenAI (scoring and embeddings), Tavily, FastMCP, Chroma `HttpClient`.
+
+**Not affected:** `pyodbc`. It delegates TLS to Windows SChannel, so the Somee connection never had this problem. `app/events/db.py` still calls `bootstrap.init()` because it is often the first module a process imports.
+
+PyPI is not intercepted, so `pip install` works normally. `npm` is intercepted and needs `NODE_EXTRA_CA_CERTS` if ever required.
+
+# Chroma process safety
+
+Chroma is thread-safe but **not process-safe**. Two processes on one `PersistentClient` path risk SQLite locks, corruption, and a known ~16-minute startup hang. Flask and the agent both need the vector store, so embedded mode is forbidden.
+
+Run the server:
+
+```bash
+chroma run --path ./chroma-data --port 8000
+```
+
+```python
+# ❌ BAD — embedded; deadlocks across the Flask and agent processes
+client = chromadb.PersistentClient(path="./chroma-data")
+
+# ✅ GOOD — server mode, safe from both processes
+client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+```
+
+`chromadb` is imported **only** in `app/infrastructure/vector_store.py`, behind the `VectorStore` protocol. Sub-agents and query handlers depend on the protocol so the store stays swappable by configuration.
+
+Collections are fixed: `bid_concepts`, `portfolios`, `rubrics`, `regulations`. Rubrics are stored **unchunked**, one document per requirement type — a fragmented rubric returns half a scoring scale and silently degrades score consistency.
+
+`chroma-data/` is gitignored and rebuilt by the seed script; never commit it.
