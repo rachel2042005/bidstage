@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}{{ details.tender.name }} · BidStage{% endblock %}
+{% block content %}
+<p class="mb-2"><a href="{{ back_url }}">{{ back_label }}</a></p>
+<p class="mb-1">
+  <span class="badge text-bg-secondary">{{ status_labels[details.tender.status] }}</span>
+  {{ event_type_labels[details.tender.event_type] }}
+</p>
+<h1 class="h3">{{ details.tender.name }}</h1>
+<dl class="row">
+  <dt class="col-sm-3">אזור</dt>
+  <dd class="col-sm-9">{{ details.tender.region }}</dd>
+  <dt class="col-sm-3">תאריך האירוע</dt>
+  <dd class="col-sm-9"><span class="ltr-numeric">{{ details.tender.event_date|event_day }}</span></dd>
+  <dt class="col-sm-3">מועד אחרון להגשה</dt>
+  <dd class="col-sm-9"><span class="ltr-numeric">{{ details.tender.deadline|local_dt }}</span></dd>
+  <dt class="col-sm-3">תקציב משוער</dt>
+  <dd class="col-sm-9"><span class="ltr-numeric">₪{{ details.tender.budget_amount|shekels }}</span></dd>
+  <dt class="col-sm-3">α</dt>
+  <dd class="col-sm-9"><span class="ltr-numeric">{{ details.tender.alpha|alpha_pct }}</span> איכות</dd>
+</dl>
+
+<h2 class="h5">דרישות</h2>
+{% if details.requirements %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>סוג</th>
+      <th>משקל</th>
+      <th>תנאי סף</th>
+      <th>תיאור</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for requirement in details.requirements %}
+    <tr>
+      <td>{{ requirement_type_labels[requirement.requirement_type] }}</td>
+      <td><span class="ltr-numeric">{{ requirement.weight }}%</span></td>
+      <td>{% if requirement.is_threshold %}כן{% else %}לא{% endif %}</td>
+      <td>{{ requirement.description }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p>סכום משקלות: <span class="ltr-numeric">{{ details.weight_total }}%</span></p>
+{% else %}
+<p>עדיין אין דרישות.</p>
+{% endif %}
+
+{% if can_edit %}
+<hr>
+<h2 class="h5">הוספת דרישה</h2>
+<form method="post" action="{{ url_for('tenders.add_tender_requirement', tender_id=details.tender.tender_id) }}" class="card card-body shadow-sm mb-3">
+  <div class="row g-3">
+    <div class="col-md-4">
+      <label class="form-label" for="requirement_type">סוג דרישה</label>
+      <select class="form-select" id="requirement_type" name="requirement_type" required>
+        <option value="" disabled selected>בחרו</option>
+        {% for value, label in requirement_type_labels.items() %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label" for="weight">משקל %</label>
+      <input class="form-control ltr-numeric" id="weight" name="weight" inputmode="numeric" required>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label" for="is_threshold">תנאי סף</label>
+      <select class="form-select" id="is_threshold" name="is_threshold">
+        <option value="0" selected>לא</option>
+        <option value="1">כן</option>
+      </select>
+    </div>
+    <div class="col-12">
+      <label class="form-label" for="description">תיאור</label>
+      <textarea class="form-control" id="description" name="description" rows="2" required></textarea>
+    </div>
+  </div>
+  <button type="submit" class="btn btn-outline-primary mt-3">הוספת דרישה</button>
+</form>
+<form method="post" action="{{ url_for('tenders.publish_existing', tender_id=details.tender.tender_id) }}">
+  <button type="submit" class="btn btn-primary">פרסום מכרז</button>
+</form>
+{% endif %}
+{% endblock %}

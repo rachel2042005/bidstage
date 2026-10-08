@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}מכרז חדש · BidStage{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">מכרז חדש</h1>
+<p><a href="{{ url_for('pages.organizer_home') }}">חזרה למכרזים שלי</a></p>
+<p class="text-muted">שמרו טיוטה והוסיפו דרישות, או פרסמו כשסכום המשקלות הוא 100 בדיוק.</p>
+<form method="post" action="{{ url_for('tenders.create_tender') }}" class="card card-body shadow-sm">
+  <div class="row g-3">
+    <div class="col-md-8">
+      <label class="form-label" for="name">שם האירוע</label>
+      <input class="form-control" id="name" name="name" required value="{{ form.get('name', '') }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label" for="event_type">סוג</label>
+      <select class="form-select" id="event_type" name="event_type" required>
+        <option value="" disabled {% if not form.get('event_type') %}selected{% endif %}>בחרו סוג</option>
+        {% for value, label in event_type_labels.items() %}
+        <option value="{{ value }}" {% if form.get('event_type') == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label" for="event_date">תאריך האירוע</label>
+      <input class="form-control ltr-numeric" type="date" id="event_date" name="event_date" required value="{{ form.get('event_date', '') }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label" for="region">אזור</label>
+      <input class="form-control" id="region" name="region" required value="{{ form.get('region', '') }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label" for="budget">תקציב משוער (₪)</label>
+      <input class="form-control ltr-numeric" id="budget" name="budget" inputmode="decimal" required value="{{ form.get('budget', '') }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label" for="deadline">מועד אחרון להגשה (שעון ישראל)</label>
+      <input class="form-control ltr-numeric" type="datetime-local" id="deadline" name="deadline" required value="{{ form.get('deadline', '') }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label" for="alpha">משקל איכות α (0–1)</label>
+      <input class="form-control ltr-numeric" id="alpha" name="alpha" inputmode="decimal" required value="{{ form.get('alpha', '0.6') }}">
+    </div>
+  </div>
+
+  <h2 class="h5 mt-4">דרישות</h2>
+  <div id="requirement-rows">
+    {% for row in rows %}
+    <div class="requirement-row border rounded p-3 mb-3">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">סוג דרישה</label>
+          <select class="form-select" name="req_type">
+            <option value="">בחרו</option>
+            {% for value, label in requirement_type_labels.items() %}
+            <option value="{{ value }}" {% if row.requirement_type == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">משקל %</label>
+          <input class="form-control ltr-numeric" name="req_weight" inputmode="numeric" value="{{ row.weight }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">תנאי סף</label>
+          <select class="form-select" name="req_threshold">
+            <option value="0" {% if row.is_threshold != '1' %}selected{% endif %}>לא</option>
+            <option value="1" {% if row.is_threshold == '1' %}selected{% endif %}>כן</option>
+          </select>
+        </div>
+        <div class="col-12">
+          <label class="form-label">תיאור</label>
+          <textarea class="form-control" name="req_description" rows="2">{{ row.description }}</textarea>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <button type="button" class="btn btn-outline-secondary mb-3" id="add-requirement">הוספת דרישה</button>
+
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-outline-primary" name="intent" value="draft">שמירת טיוטה</button>
+    <button type="submit" class="btn btn-primary" name="intent" value="publish">פרסום מכרז</button>
+  </div>
+</form>
+<template id="requirement-template">
+  <div class="requirement-row border rounded p-3 mb-3">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">סוג דרישה</label>
+        <select class="form-select" name="req_type">
+          <option value="">בחרו</option>
+          {% for value, label in requirement_type_labels.items() %}
+          <option value="{{ value }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">משקל %</label>
+        <input class="form-control ltr-numeric" name="req_weight" inputmode="numeric">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">תנאי סף</label>
+        <select class="form-select" name="req_threshold">
+          <option value="0" selected>לא</option>
+          <option value="1">כן</option>
+        </select>
+      </div>
+      <div class="col-12">
+        <label class="form-label">תיאור</label>
+        <textarea class="form-control" name="req_description" rows="2"></textarea>
+      </div>
+    </div>
+  </div>
+</template>
+<script>
+  document.getElementById("add-requirement").addEventListener("click", function () {
+    const template = document.getElementById("requirement-template");
+    document.getElementById("requirement-rows").appendChild(template.content.cloneNode(true));
+  });
+</script>
+{% endblock %}
