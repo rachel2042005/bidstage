@@ -29,3 +29,8 @@ def format_local_datetime(value: datetime) -> str:
 def format_alpha(alpha: Decimal) -> str:
     percent = (Decimal(alpha) * Decimal(100)).quantize(Decimal("1"))
     return f"{percent}%"
+
+
+def format_price_share(alpha: Decimal) -> str:
+    percent = ((Decimal(1) - Decimal(alpha)) * Decimal(100)).quantize(Decimal("1"))
+    return f"{percent}%"

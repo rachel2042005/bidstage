@@ -16,11 +16,12 @@
   <dd class="col-sm-9"><span class="ltr-numeric">{{ details.tender.deadline|local_dt }}</span></dd>
   <dt class="col-sm-3">תקציב משוער</dt>
   <dd class="col-sm-9"><span class="ltr-numeric">₪{{ details.tender.budget_amount|shekels }}</span></dd>
-  <dt class="col-sm-3">α</dt>
-  <dd class="col-sm-9"><span class="ltr-numeric">{{ details.tender.alpha|alpha_pct }}</span> איכות</dd>
+  <dt class="col-sm-3">משקל איכות α</dt>
+  <dd class="col-sm-9"><span class="ltr-numeric">{{ details.tender.alpha|alpha_pct }}</span> איכות, <span class="ltr-numeric">{{ details.tender.alpha|price_pct }}</span> מחיר</dd>
 </dl>
 
-<h2 class="h5">דרישות</h2>
+<h2 class="h5">קריטריוני הערכה</h2>
+<p class="text-muted">ציון האיכות הוא סכום משוקלל של הדרישות. סכום המשקלות במכרז שפורסם הוא 100%.</p>
 {% if details.requirements %}
 <table class="table">
   <thead>
@@ -35,8 +36,13 @@
     {% for requirement in details.requirements %}
     <tr>
       <td>{{ requirement_type_labels[requirement.requirement_type] }}</td>
-      <td><span class="ltr-numeric">{{ requirement.weight }}%</span></td>
-      <td>{% if requirement.is_threshold %}כן{% else %}לא{% endif %}</td>
+      <td>
+        <span class="ltr-numeric">{{ requirement.weight }}%</span>
+        <div class="progress mt-1" style="height: 0.4rem;">
+          <div class="progress-bar" style="width: {{ requirement.weight }}%"></div>
+        </div>
+      </td>
+      <td>{% if requirement.is_threshold %}<span class="badge text-bg-warning">תנאי סף</span>{% else %}לא{% endif %}</td>
       <td>{{ requirement.description }}</td>
     </tr>
     {% endfor %}

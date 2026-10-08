@@ -41,6 +41,7 @@ BEGIN
         budget_amount    BIGINT        NOT NULL,
         budget_currency  CHAR(3)       NOT NULL,
         published_at     DATETIME2     NULL,
+        search_text      NVARCHAR(MAX) NOT NULL,
         CONSTRAINT pk_rm_tender_search PRIMARY KEY (tender_id),
         CONSTRAINT ck_rm_tender_search_status CHECK (
             status IN ('draft', 'open', 'under_evaluation', 'decided', 'failed', 'cancelled')
@@ -95,6 +96,23 @@ BEGIN
 END
 """
 
+# Tables created before search_text existed still need the column and the
+# lookup index. Both statements are idempotent.
+ADD_SEARCH_TEXT = """
+IF COL_LENGTH('dbo.rm_tender_search', 'search_text') IS NULL
+    ALTER TABLE dbo.rm_tender_search
+        ADD search_text NVARCHAR(MAX) NOT NULL
+            CONSTRAINT df_rm_tender_search_text DEFAULT N'';
+"""
+
+CREATE_SEARCH_LOOKUP_INDEX = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes WHERE name = 'ix_rm_tender_search_lookup'
+)
+    CREATE INDEX ix_rm_tender_search_lookup
+        ON dbo.rm_tender_search (status, event_type, event_date);
+"""
+
 _SUMMARY_COLUMNS = (
     "tender_id, organizer_id, name, event_type, event_date, region, deadline, "
     "status, alpha, budget_amount, budget_currency, published_at"
@@ -127,13 +145,26 @@ class RequirementRecord:
     description: str
 
 
+@dataclass(frozen=True)
+class TenderSearch:
+    """Filters for SearchTenders. Empty fields are unconstrained."""
+
+    organizer_id: str | None = None
+    status: str | None = None
+    event_type: str | None = None
+    region: str | None = None
+    event_date_from: date | None = None
+    event_date_to: date | None = None
+    keyword: str | None = None
+
+
 class TendersProjection(Protocol):
     def apply_created(self, tender_id: str, data: dict) -> None: ...
     def apply_requirement(self, tender_id: str, data: dict) -> None: ...
     def apply_published(self, tender_id: str, data: dict) -> None: ...
     def get(self, tender_id: str) -> TenderSummary | None: ...
     def requirements_for(self, tender_id: str) -> list[RequirementRecord]: ...
-    def list_all(self) -> list[TenderSummary]: ...
+    def search(self, criteria: TenderSearch) -> list[TenderSummary]: ...
     def clear(self) -> None: ...
 
 
@@ -141,15 +172,20 @@ class InMemoryTendersProjection:
     def __init__(self) -> None:
         self._tenders: dict[str, TenderSummary] = {}
         self._requirements: dict[str, list[RequirementRecord]] = {}
+        self._search_text: dict[str, str] = {}
 
     def apply_created(self, tender_id: str, data: dict) -> None:
         self._tenders[tender_id] = _summary_from_created(tender_id, data)
         self._requirements[tender_id] = []
+        self._search_text[tender_id] = initial_search_text(data)
 
     def apply_requirement(self, tender_id: str, data: dict) -> None:
         if tender_id not in self._tenders:
             raise KeyError(tender_id)
         self._requirements[tender_id].append(_requirement_from_data(tender_id, data))
+        self._search_text[tender_id] = (
+            self._search_text[tender_id] + "\n" + requirement_search_text(data)
+        )
 
     def apply_published(self, tender_id: str, data: dict) -> None:
         current = self._tenders[tender_id]
@@ -165,12 +201,32 @@ class InMemoryTendersProjection:
     def requirements_for(self, tender_id: str) -> list[RequirementRecord]:
         return list(self._requirements.get(tender_id, []))
 
-    def list_all(self) -> list[TenderSummary]:
-        return list(self._tenders.values())
+    def search(self, criteria: TenderSearch) -> list[TenderSummary]:
+        region_key = criteria.region.casefold().strip() if criteria.region else None
+        matched = []
+        for tender_id, row in self._tenders.items():
+            if criteria.organizer_id is not None and row.organizer_id != criteria.organizer_id:
+                continue
+            if criteria.status is not None and row.status != criteria.status:
+                continue
+            if criteria.event_type is not None and row.event_type != criteria.event_type:
+                continue
+            if region_key is not None and row.region.casefold() != region_key:
+                continue
+            if criteria.event_date_from is not None and row.event_date < criteria.event_date_from:
+                continue
+            if criteria.event_date_to is not None and row.event_date > criteria.event_date_to:
+                continue
+            if not keyword_matches(self._search_text.get(tender_id, ""), criteria.keyword):
+                continue
+            matched.append(row)
+        matched.sort(key=lambda row: (row.event_date, row.name))
+        return matched
 
     def clear(self) -> None:
         self._tenders.clear()
         self._requirements.clear()
+        self._search_text.clear()
 
 
 class SqlTendersProjection:
@@ -179,8 +235,9 @@ class SqlTendersProjection:
 
     def apply_created(self, tender_id: str, data: dict) -> None:
         summary = _summary_from_created(tender_id, data)
-        for table in ("dbo.rm_tender_search", "dbo.rm_tender_detail"):
-            _insert_summary(self._conn, table, summary)
+        text = initial_search_text(data)
+        _insert_summary(self._conn, "dbo.rm_tender_detail", summary)
+        _insert_summary(self._conn, "dbo.rm_tender_search", summary, search_text=text)
 
     def apply_requirement(self, tender_id: str, data: dict) -> None:
         record = _requirement_from_data(tender_id, data)
@@ -200,6 +257,15 @@ class SqlTendersProjection:
             1 if record.is_threshold else 0,
             record.description,
             sort_order,
+        )
+        cursor.close()
+        cursor = self._conn.cursor()
+        cursor.setinputsizes([(pyodbc.SQL_WVARCHAR, 0, 0), None])
+        cursor.execute(
+            "UPDATE dbo.rm_tender_search "
+            "SET search_text = CONCAT(search_text, NCHAR(10), ?) WHERE tender_id = ?",
+            requirement_search_text(data),
+            tender_id,
         )
         cursor.close()
 
@@ -244,9 +310,13 @@ class SqlTendersProjection:
         cursor.close()
         return rows
 
-    def list_all(self) -> list[TenderSummary]:
+    def search(self, criteria: TenderSearch) -> list[TenderSummary]:
+        sql, params = compile_search_sql(criteria)
         cursor = self._conn.cursor()
-        cursor.execute(f"SELECT {_SUMMARY_COLUMNS} FROM dbo.rm_tender_search")
+        if params:
+            cursor.execute(sql, params)
+        else:
+            cursor.execute(sql)
         rows = [_row_to_summary(row) for row in cursor.fetchall()]
         cursor.close()
         return rows
@@ -274,6 +344,8 @@ def create_tenders_projection(conn: pyodbc.Connection) -> None:
     cursor.execute(CREATE_RM_TENDER_SEARCH)
     cursor.execute(CREATE_RM_TENDER_DETAIL)
     cursor.execute(CREATE_RM_REQUIREMENT)
+    cursor.execute(ADD_SEARCH_TEXT)
+    cursor.execute(CREATE_SEARCH_LOOKUP_INDEX)
     cursor.close()
 
 
@@ -324,26 +396,15 @@ def _requirement_from_data(tender_id: str, data: dict) -> RequirementRecord:
     )
 
 
-def _insert_summary(conn: pyodbc.Connection, table: str, summary: TenderSummary) -> None:
-    cursor = conn.cursor()
-    cursor.setinputsizes(
-        [
-            None,
-            None,
-            (pyodbc.SQL_WVARCHAR, 200, 0),
-            None,
-            None,
-            (pyodbc.SQL_WVARCHAR, 100, 0),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ]
-    )
-    cursor.execute(
-        f"INSERT INTO {table} ({_SUMMARY_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+def _insert_summary(
+    conn: pyodbc.Connection,
+    table: str,
+    summary: TenderSummary,
+    search_text: str | None = None,
+) -> None:
+    columns = _SUMMARY_COLUMNS
+    values = "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+    params: list = [
         summary.tender_id,
         summary.organizer_id,
         summary.name,
@@ -356,8 +417,85 @@ def _insert_summary(conn: pyodbc.Connection, table: str, summary: TenderSummary)
         summary.budget_amount,
         summary.budget_currency,
         _sql_datetime(summary.published_at),
-    )
+    ]
+    sizes: list = [
+        None,
+        None,
+        (pyodbc.SQL_WVARCHAR, 200, 0),
+        None,
+        None,
+        (pyodbc.SQL_WVARCHAR, 100, 0),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ]
+    if search_text is not None:
+        columns = f"{columns}, search_text"
+        values = f"{values}, ?"
+        params.append(search_text)
+        sizes.append((pyodbc.SQL_WVARCHAR, 0, 0))
+    cursor = conn.cursor()
+    cursor.setinputsizes(sizes)
+    cursor.execute(f"INSERT INTO {table} ({columns}) VALUES ({values})", params)
     cursor.close()
+
+
+def keyword_matches(document: str, keyword: str | None) -> bool:
+    """Every whitespace-separated token must appear in the projected search text."""
+    tokens = [part.casefold() for part in (keyword or "").split() if part]
+    folded = document.casefold()
+    return all(token in folded for token in tokens)
+
+
+def initial_search_text(data: dict) -> str:
+    return f"{data['name']}\n{data['region']}".casefold()
+
+
+def requirement_search_text(data: dict) -> str:
+    return f"{data['type']}\n{data['description']}".casefold()
+
+
+def compile_search_sql(criteria: TenderSearch) -> tuple[str, list]:
+    """Parameterized lookup. Values never get interpolated into the SQL text."""
+    clauses: list[str] = []
+    params: list = []
+    if criteria.organizer_id is not None:
+        clauses.append("organizer_id = ?")
+        params.append(criteria.organizer_id)
+    if criteria.status is not None:
+        clauses.append("status = ?")
+        params.append(criteria.status)
+    if criteria.event_type is not None:
+        clauses.append("event_type = ?")
+        params.append(criteria.event_type)
+    if criteria.region is not None and criteria.region.strip():
+        clauses.append("LOWER(region) = LOWER(?)")
+        params.append(criteria.region.strip())
+    if criteria.event_date_from is not None:
+        clauses.append("event_date >= ?")
+        params.append(criteria.event_date_from)
+    if criteria.event_date_to is not None:
+        clauses.append("event_date <= ?")
+        params.append(criteria.event_date_to)
+    for token in (criteria.keyword or "").split():
+        if not token:
+            continue
+        clauses.append("search_text LIKE ?")
+        params.append(_like_contains(token.casefold()))
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = (
+        f"SELECT {_SUMMARY_COLUMNS} FROM dbo.rm_tender_search"
+        f"{where} ORDER BY event_date, name"
+    )
+    return sql, params
+
+
+def _like_contains(token: str) -> str:
+    safe = token.replace("[", "[[]").replace("%", "[%]").replace("_", "[_]")
+    return f"%{safe}%"
 
 
 def _fetch_one(conn: pyodbc.Connection, sql: str, tender_id: str) -> TenderSummary | None:
