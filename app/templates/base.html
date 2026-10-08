@@ -13,12 +13,28 @@
 <body class="bg-light">
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
     <div class="container">
-      <a class="navbar-brand" href="/">BidStage</a>
+      <a class="navbar-brand" href="{{ url_for('pages.home') }}">BidStage</a>
+      <div class="navbar-nav flex-row ms-auto">
+        {% if current_user %}
+          <span class="navbar-text me-3">{{ current_user.display_name }}</span>
+          <a class="nav-link" href="{{ url_for('auth.logout') }}">יציאה</a>
+        {% else %}
+          <a class="nav-link" href="{{ url_for('auth.login') }}">כניסה</a>
+          <a class="nav-link" href="{{ url_for('auth.register_form') }}">הרשמה</a>
+        {% endif %}
+      </div>
       {% block nav %}{% endblock %}
     </div>
   </nav>
 
   <main class="container py-4">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }}" role="alert">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
     {% block content %}{% endblock %}
   </main>
 

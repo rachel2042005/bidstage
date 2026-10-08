@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from typing import Final
 
+# User stream
+USER_REGISTERED: Final = "UserRegistered"
+USER_LOGGED_IN: Final = "UserLoggedIn"
+
 # Tender stream
 TENDER_CREATED: Final = "TenderCreated"
 REQUIREMENT_ADDED: Final = "RequirementAdded"
@@ -27,6 +31,8 @@ REQUIREMENT_SCORED: Final = "RequirementScored"
 BID_DISQUALIFIED: Final = "BidDisqualified"
 QUALITY_ASSESSMENT_COMPLETED: Final = "QualityAssessmentCompleted"
 SCORE_OVERRIDDEN: Final = "ScoreOverridden"
+
+USER_EVENTS: Final = frozenset({USER_REGISTERED, USER_LOGGED_IN})
 
 TENDER_EVENTS: Final = frozenset(
     {
@@ -54,4 +60,4 @@ BID_EVENTS: Final = frozenset(
     }
 )
 
-ALL_EVENTS: Final = TENDER_EVENTS | BID_EVENTS
+ALL_EVENTS: Final = USER_EVENTS | TENDER_EVENTS | BID_EVENTS
