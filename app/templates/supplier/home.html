@@ -1,6 +1,32 @@
 {% extends "base.html" %}
 {% block title %}אזור ספק · BidStage{% endblock %}
 {% block content %}
-<h1 class="h3">אזור ספק</h1>
-<p>כאן יופיעו מכרזים פתוחים בפרק הבא.</p>
+<h1 class="h3">מכרזים פתוחים</h1>
+<form method="get" action="{{ url_for('pages.supplier_home') }}" class="row g-2 align-items-end mb-3">
+  <div class="col-md-3">
+    <label class="form-label" for="event_type">סוג</label>
+    <select class="form-select" id="event_type" name="event_type">
+      <option value="">הכל</option>
+      {% for value, label in event_type_labels.items() %}
+      <option value="{{ value }}" {% if filters.event_type == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label" for="region">אזור</label>
+    <input class="form-control" id="region" name="region" value="{{ filters.region }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label" for="event_date_from">מתאריך</label>
+    <input class="form-control ltr-numeric" type="date" id="event_date_from" name="event_date_from" value="{{ filters.event_date_from }}">
+  </div>
+  <div class="col-md-2">
+    <label class="form-label" for="event_date_to">עד תאריך</label>
+    <input class="form-control ltr-numeric" type="date" id="event_date_to" name="event_date_to" value="{{ filters.event_date_to }}">
+  </div>
+  <div class="col-md-2">
+    <button type="submit" class="btn btn-outline-primary w-100">סינון</button>
+  </div>
+</form>
+{% include "tenders/_list.html" %}
 {% endblock %}

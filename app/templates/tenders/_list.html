@@ -1,0 +1,22 @@
+{% if tenders %}
+<div class="list-group">
+  {% for tender in tenders %}
+  <a class="list-group-item list-group-item-action" href="{{ url_for(detail_endpoint, tender_id=tender.tender_id) }}">
+    <div class="d-flex justify-content-between align-items-center">
+      <strong>{{ tender.name }}</strong>
+      {% if show_status %}
+      <span class="badge text-bg-secondary">{{ status_labels[tender.status] }}</span>
+      {% endif %}
+    </div>
+    <div class="small text-muted">
+      {{ event_type_labels[tender.event_type] }}
+      · {{ tender.region }}
+      · <span class="ltr-numeric">{{ tender.event_date|event_day }}</span>
+      · הגשה עד <span class="ltr-numeric">{{ tender.deadline|local_dt }}</span>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<p>{{ empty_message }}</p>
+{% endif %}

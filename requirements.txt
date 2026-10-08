@@ -4,6 +4,7 @@ truststore==0.10.1
 pyodbc==5.2.0
 Flask==3.1.0
 pytest==8.3.4
+tzdata==2025.2
 
 # Later phases (uncomment when the phase begins)
 # openai

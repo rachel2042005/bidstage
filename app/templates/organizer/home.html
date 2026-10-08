@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}אזור מארגן · BidStage{% endblock %}
 {% block content %}
-<h1 class="h3">אזור מארגן</h1>
-<p>כאן יפורסמו מכרזים בפרק הבא.</p>
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">המכרזים שלי</h1>
+  <a class="btn btn-primary" href="{{ url_for('tenders.new_tender') }}">מכרז חדש</a>
+</div>
+{% include "tenders/_list.html" %}
 {% endblock %}

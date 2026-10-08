@@ -16,7 +16,7 @@ from app.domain.user import (
     InvalidRoleError,
 )
 from app.queries.get_user import get_user_by_id
-from app.routes.services import auth_unit_of_work
+from app.routes.services import unit_of_work
 
 bp = Blueprint("auth", __name__)
 
@@ -58,7 +58,7 @@ def register_submit():
     display_name = request.form.get("display_name", "")
     role = request.form.get("role", "")
     try:
-        with auth_unit_of_work() as (store, users):
+        with unit_of_work() as (store, users, _tenders):
             user_id = register_user(
                 store,
                 users,
@@ -102,7 +102,7 @@ def login_submit():
     email = request.form.get("email", "")
     password = request.form.get("password", "")
     try:
-        with auth_unit_of_work() as (store, users):
+        with unit_of_work() as (store, users, _tenders):
             user_id = authenticate_user(
                 store, users, AuthenticateUser(email=email, password=password)
             )
