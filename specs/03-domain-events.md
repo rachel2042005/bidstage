@@ -10,6 +10,7 @@ The event stream is the system of record. Everything else — read models, dashb
 
 | Stream | `StreamId` | Lifetime |
 | --- | --- | --- |
+| User | `user-{uuid}` | Registration onwards (role never changes) |
 | Tender | Tender UUID | Creation to decided, failed or cancelled |
 | Bid | Bid UUID | Submission to qualified, disqualified or withdrawn |
 
@@ -20,6 +21,15 @@ Requirement scores live on the **bid** stream, not the tender stream. A bid's co
 ---
 
 ## 2. Event catalogue
+
+### User stream
+
+| Event | Payload | Emitted by | Preconditions |
+| --- | --- | --- | --- |
+| `UserRegistered` | `user_id`, `email`, `display_name`, `role`, `password_hash` | `RegisterUser` | `role` is `organizer` or `supplier`; email is unique (case-insensitive); password is hashed before the event is written. The plaintext password is never in `event_data`. |
+| `UserLoggedIn` | `user_id`, `logged_in_at` | `AuthenticateUser` | Credentials match the projected user. Failed attempts emit nothing. |
+
+Role is a field of `UserRegistered`, not a later `UserRoleAssigned` event. `FR-AUTH-1` makes the role immutable; a compensating role-change event would be a spec change, not a correction.
 
 ### Tender stream
 

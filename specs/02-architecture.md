@@ -95,10 +95,14 @@ app/
     schema.py                 # events DDL and introspection
     event_store.py            # append-only EventStore
     event_types.py            # event name constants
-  projections/                # read models, incl. rm_bid_for_assessment
-  routes/                     # Flask blueprints
-  domain/                     # Phase 3: aggregates, scoring
+  projections/                # read models, incl. rm_user
+  routes/
+    auth.py                   # /register, /login, /logout
+    access.py                 # login_required, require_role
+    pages.py                  # home + role-gated placeholders
+  domain/                     # aggregates (pure replay), scoring
   templates/base.html         # Hebrew RTL shell
+  templates/auth/             # registration and login forms
   static/css/app.css
 agent/
   runner.py                   # poll loop + Evaluate Now consumer
@@ -112,6 +116,7 @@ scripts/
   seed.py                     # Phase 3: rebuilds SQL + Chroma (ENV-6)
 tests/
   smoke_test_event_store.py
+  test_auth.py
 specs/
 ```
 
@@ -139,9 +144,21 @@ Steps 3 and 4 share one transaction, so a read model can never reflect an event 
 
 ### Commands
 
-`PublishTender` · `AddRequirement` · `SubmitBid` · `WithdrawBid` · `CloseTender` · `ScoreRequirement` · `RevealPrices` · `OverrideScore` · `SelectWinner` · `CancelTender`
+`RegisterUser` · `AuthenticateUser` · `PublishTender` · `AddRequirement` · `SubmitBid` · `WithdrawBid` · `CloseTender` · `ScoreRequirement` · `RevealPrices` · `OverrideScore` · `SelectWinner` · `CancelTender`
 
 `ScoreRequirement` is issued by the agent through `submit_requirement_score`; the rest originate from the UI. `RevealPrices` is issued by the web process only — never the agent.
+
+There is no `UserRoleAssigned` command or event. Role is a field of `UserRegistered` and is immutable (`FR-AUTH-1`). An attempt to change it after registration is rejected (`T-AUTH-7`).
+
+`RegisterUser` and `AuthenticateUser` return a `user_id`. Session fields (email, display name, role) are loaded afterwards with `GetUserById` from `rm_user`. Failed logins emit nothing.
+
+### Identity and sessions
+
+The web process uses a Flask signed session cookie (`FLASK_SECRET_KEY`), not JWT. The cookie holds `user_id`, `email`, `display_name` and `role`.
+
+`@require_role("organizer")` / `@require_role("supplier")` live in `app/routes/access.py`. Unauthenticated requests to a gated route redirect to `/login`. A signed-in user with the wrong role receives 403 and no resource content (`FR-AUTH-4`, `T-AUTH-2`).
+
+`rm_user` is the login and authorization lookup (`NFR-CQRS-2`): `user_id`, unique case-insensitive `email`, `display_name`, `role` (`organizer` | `supplier`), `password_hash`, `registered_at`, `last_login_at`. The password column is a salted hash only (`FR-AUTH-2`). `init_db.py` creates this table next to `dbo.events`.
 
 ---
 
@@ -157,6 +174,7 @@ A query handler that opens the events table is a defect (`NFR-CQRS-2`).
 
 | Query | Read model |
 | --- | --- |
+| `GetUserByEmail` / `GetUserById` | `rm_user` |
 | `SearchTenders` | `rm_tender_search` |
 | `GetTenderDetails` | `rm_tender_detail`, `rm_requirement` |
 | `GetBidComparison` | `rm_bid_ranking` |
@@ -212,7 +230,7 @@ Naming is snake_case throughout and the table is `dbo.events`.
 
 **Size.** Somee's free tier allows 30 MB (`ENV-2`). A tender with five requirements and four bids produces roughly 45 events; justifications dominate the payload at ~1–2 KB each, so a complete tender costs well under 100 KB. The cap permits hundreds of tenders, provided embeddings stay out (`ENV-3`).
 
-Stream identity: one stream per tender, and one per bid. Requirement scores belong to the bid stream.
+Stream identity: one stream per user, one per tender, and one per bid. Requirement scores belong to the bid stream. User identity for login is served by `rm_user` (email and role), never by replaying the user stream on each request.
 
 ---
 
