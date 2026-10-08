@@ -17,6 +17,7 @@ from app.routes.formatting import (  # noqa: E402
     format_alpha,
     format_event_day,
     format_local_datetime,
+    format_price_share,
     format_shekels,
 )
 from app.routes.pages import bp as pages_bp  # noqa: E402
@@ -64,6 +65,7 @@ def create_app(*, event_store=None, users=None, tenders=None) -> Flask:
     app.add_template_filter(format_event_day, "event_day")
     app.add_template_filter(format_local_datetime, "local_dt")
     app.add_template_filter(format_alpha, "alpha_pct")
+    app.add_template_filter(format_price_share, "price_pct")
 
     @app.context_processor
     def inject_labels():

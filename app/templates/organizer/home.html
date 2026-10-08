@@ -5,5 +5,23 @@
   <h1 class="h3 mb-0">המכרזים שלי</h1>
   <a class="btn btn-primary" href="{{ url_for('tenders.new_tender') }}">מכרז חדש</a>
 </div>
+<form method="get" action="{{ url_for('pages.organizer_home') }}" class="row g-2 align-items-end mb-3">
+  <div class="col-md-6">
+    <label class="form-label" for="q">חיפוש</label>
+    <input class="form-control" id="q" name="q" value="{{ filters.q }}" placeholder="שם או תיאור דרישה">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label" for="status">סטטוס</label>
+    <select class="form-select" id="status" name="status">
+      <option value="">הכל</option>
+      {% for value, label in status_labels.items() %}
+      <option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <button type="submit" class="btn btn-outline-primary w-100">סינון</button>
+  </div>
+</form>
 {% include "tenders/_list.html" %}
 {% endblock %}

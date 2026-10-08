@@ -3,8 +3,12 @@
 {% block content %}
 <h1 class="h3">מכרזים פתוחים</h1>
 <form method="get" action="{{ url_for('pages.supplier_home') }}" class="row g-2 align-items-end mb-3">
+  <div class="col-12">
+    <label class="form-label" for="q">חיפוש</label>
+    <input class="form-control" id="q" name="q" value="{{ filters.q }}" placeholder="שם, אזור או תיאור דרישה">
+  </div>
   <div class="col-md-3">
-    <label class="form-label" for="event_type">סוג</label>
+    <label class="form-label" for="event_type">סוג אירוע</label>
     <select class="form-select" id="event_type" name="event_type">
       <option value="">הכל</option>
       {% for value, label in event_type_labels.items() %}
