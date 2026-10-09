@@ -5,8 +5,16 @@ pyodbc==5.2.0
 Flask==3.1.0
 pytest==8.3.4
 
+# Phase 4 — vector store and embeddings
+# chromadb brings the server (`chroma run`) as well as the HTTP client, so one
+# environment serves both processes. Embeddings are computed through the openai
+# SDK in app/infrastructure/vector_store.py, so sentence-transformers — and the
+# PyTorch stack behind it — is deliberately absent. chromadb does pull
+# onnxruntime in transitively, but its bundled embedding function is never
+# constructed and no ONNX model is ever downloaded.
+chromadb==1.5.9
+openai==3.26.1
+
 # Later phases (uncomment when the phase begins)
-# openai
-# chromadb
 # deepagents
 # fastmcp

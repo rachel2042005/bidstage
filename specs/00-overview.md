@@ -169,8 +169,8 @@ Flask application, organized per MVC and CQRS, persisting to a cloud database vi
 | DB driver | `pyodbc` via ODBC Driver 17 | Driver confirmed present on the dev machine |
 | App hosting | Local only, pointing at the Somee database | Somee serves ASP.NET / .NET Core only and cannot host Flask |
 | Read models | Projected **synchronously** inside command handlers | No eventual consistency, no demo lag |
-| Vector store | Chroma in **server mode**, `chroma run --path ./chroma-data --port 8000` | Both Flask and the agent connect via `HttpClient`; embedded mode is unsafe across processes |
-| Embeddings | OpenAI `text-embedding-3-small`, 1536 dimensions | Multilingual, so Hebrew bid text is indexed natively |
+| Vector store | Chroma in **server mode**, `chroma run --path ./chroma-data --port 8000` | `chromadb==1.5.9`, started by `scripts/run_chroma.ps1`. Both Flask and the agent connect via `HttpClient`; embedded mode is unsafe across processes. All collections use cosine distance |
+| Embeddings | OpenAI `text-embedding-3-small` (1536 dims) **or** local Ollama `qwen3-embedding:0.6b` (1024 dims), chosen by `EMBEDDING_PROVIDER` | `openai==3.26.1`. Both are multilingual, so Hebrew bid text is indexed natively; an English-only model is never acceptable. Computed in the application process, never by the Chroma server. Switching provider requires re-seeding, and the store enforces it |
 | Outbound TLS | `truststore.inject_into_ssl()` at process start | **Mandatory.** Without it the OpenAI API is unreachable on this network — see §13 |
 | LLM | OpenAI, structured outputs / JSON schema | For repeatable rubric scoring |
 | Agent framework | `deepagents` (LangGraph), independent background process | One sub-agent per requirement type |

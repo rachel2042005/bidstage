@@ -98,6 +98,9 @@ app/
   projections/                # read models, incl. rm_bid_for_assessment
   routes/                     # Flask blueprints
   domain/                     # Phase 3: aggregates, scoring
+  infrastructure/
+    vector_store.py           # Chroma adapter — the only chromadb import
+    embeddings.py             # OpenAI / Ollama embedding providers
   templates/base.html         # Hebrew RTL shell
   static/css/app.css
 agent/
@@ -109,10 +112,14 @@ mcp_server/
 knowledge_base/
   rubrics/  regulations/      # embedded by the seed script
 scripts/
+  run_chroma.ps1              # starts the vector store in server mode
+  reset_vector_store.py       # drops collections after a provider change
   seed.py                     # Phase 3: rebuilds SQL + Chroma (ENV-6)
 tests/
   smoke_test_event_store.py
+  smoke_test_vector_store.py
 specs/
+README.md                     # setup and the three-process startup order
 ```
 
 The FastMCP tools live in a top-level `mcp_server/` rather than under `agent/`, because they are a boundary the agent consumes rather than a part of it.
@@ -229,9 +236,34 @@ class VectorStore(Protocol):
               where: dict | None = None) -> list[Match]: ...
 ```
 
-Only `infrastructure/vector_store.py` imports `chromadb`. Sub-agents and query handlers depend on the protocol, so swapping to a hosted store is one new adapter plus a config value.
+Only `app/infrastructure/vector_store.py` imports `chromadb`. Sub-agents and query handlers depend on the protocol, so swapping to a hosted store is one new adapter plus a config value.
 
-Collections, content and chunking are specified in `00-overview.md` §7. Embeddings use OpenAI `text-embedding-3-small` at 1536 dimensions (`NFR-VEC-4`); the dimension is recorded in config because changing it invalidates every stored vector.
+Collections, content and chunking are specified in `00-overview.md` §7.
+
+### Embedding providers
+
+Two, selected by `EMBEDDING_PROVIDER` (`NFR-VEC-4`). Both index Hebrew natively, which is the requirement that excludes every English-only model.
+
+| Provider | Endpoint | Model | Dim | Key | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `openai` (default) | `api.openai.com` | `text-embedding-3-small` | 1536 | required | No local process; subject to `ENV-1` |
+| `ollama` | `localhost:11434` | `qwen3-embedding:0.6b` | 1024 | none | Free, offline, bid text never leaves the machine |
+
+`app/infrastructure/embeddings.py` is the only importer of the OpenAI SDK for embeddings. One class serves both providers, because Ollama exposes an OpenAI-compatible `/v1/embeddings`; they differ only in base URL, model and key. Model and dimension are derived from the provider rather than configured beside it, so a switch cannot leave a mismatched pair.
+
+**The two are not interchangeable once documents are stored.** Vectors from different models are incomparable, and nothing downstream can detect it — retrieval simply returns the wrong documents. Each collection is therefore stamped with the model that built it, and the store raises rather than serving a collection built by another (`NFR-VEC-6`). `scripts/reset_vector_store.py` clears them; re-seed afterwards.
+
+### Distance metric
+
+All four collections are created with cosine distance (`{"hnsw:space": "cosine"}`), the conventional pairing with OpenAI embeddings. Chroma's own default is squared L2, and the metric is fixed at creation — correcting it later means dropping and re-embedding every collection. Collections are therefore created in exactly one place, `ensure_collections()`, which is idempotent; a collection created ad hoc elsewhere would silently get L2 and return subtly wrong neighbours.
+
+### Where embeddings are computed
+
+In the application process, never by the Chroma server. `vector_store.py` owns an OpenAI client built after `bootstrap.init()` and passes vectors to Chroma explicitly, with `embedding_function=None` on every collection.
+
+Two reasons, both structural. The server is started by a bare `chroma run` that no code of ours wraps, so `truststore.inject_into_ssl()` cannot be injected into it and any outbound call it made would fail against the filtering proxy (`ENV-1`). And leaving the embedding function unset would let Chroma fall back to its bundled ONNX MiniLM model, which is English-only and would degrade Hebrew retrieval without raising anything. A side benefit is that the Chroma server never receives the OpenAI key.
+
+This is also why `sentence-transformers`, and the PyTorch stack behind it, is absent from `requirements.txt`. `onnxruntime` arrives as a transitive dependency of `chromadb` itself, but the bundled embedding function is never constructed and no ONNX model is ever downloaded.
 
 ---
 
@@ -277,10 +309,12 @@ All secrets in `.env` (`NFR-SEC-1`), which is gitignored.
 
 | Variable | Purpose |
 | --- | --- |
-| `SQLSERVER_CONN` | Somee connection string (ODBC Driver 17) |
+| `SOMEE_DB_CONNECTION_STRING` | Somee connection string (ODBC Driver 17) |
 | `OPENAI_API_KEY` | Scoring and embeddings |
 | `CHROMA_HOST`, `CHROMA_PORT` | Vector store endpoint |
-| `EMBEDDING_MODEL`, `EMBEDDING_DIM` | `text-embedding-3-small`, `1536` |
+| `EMBEDDING_PROVIDER` | `openai` (default) or `ollama`; selects model and dimension |
+| `OLLAMA_BASE_URL` | Read only when the provider is `ollama`; defaults to `http://localhost:11434/v1` |
+| `EMBEDDING_MODEL`, `EMBEDDING_DIM` | Optional overrides for an unlisted model. Normally unset |
 | `TAVILY_API_KEY` | Via Tavily MCP |
 | `GMAIL_*` | Gmail MCP credentials |
 | `FLASK_SECRET_KEY` | Session signing |
