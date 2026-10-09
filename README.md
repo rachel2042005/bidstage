@@ -98,4 +98,4 @@ python tests\smoke_test_vector_store.py
 | `app/infrastructure/` | Adapters to outside systems; the only `chromadb` import |
 | `agent/` | Deep Agent orchestrator and per-requirement sub-agents |
 | `mcp_server/` | The project's two own FastMCP tools |
-| `knowledge_base/` | Rubrics and regulations, embedded by the seed script |
+| `knowledge_base/` | Rubrics and regulations, embedded by `scripts/seed_knowledge_base.py` |

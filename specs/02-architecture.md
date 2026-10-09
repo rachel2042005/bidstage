@@ -110,10 +110,11 @@ agent/
 mcp_server/
   server.py                   # the two own FastMCP tools
 knowledge_base/
-  rubrics/  regulations/      # embedded by the seed script
+  rubrics/  regulations/      # embedded by scripts/seed_knowledge_base.py
 scripts/
   run_chroma.ps1              # starts the vector store in server mode
   reset_vector_store.py       # drops collections after a provider change
+  seed_knowledge_base.py      # embeds knowledge_base/ into rubrics and regulations
   seed.py                     # Phase 3: rebuilds SQL + Chroma (ENV-6)
 tests/
   smoke_test_event_store.py
