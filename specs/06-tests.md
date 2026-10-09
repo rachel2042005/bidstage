@@ -164,6 +164,8 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 | `T-VEC-5` | Vector store accessed outside `infrastructure/vector_store.py` | `chromadb` imported nowhere else (`NFR-VEC-5`) |
 | `T-VEC-6` | Seed script run twice | Idempotent; no duplicate documents |
 
+`tests/test_semantic_search_service.py` covers the service boundary. `T-VEC-3` asserts `get_rubric` returns the whole document stored at `rubric:{TYPE}`. Regulation search asserts cosine similarity as a literal: identical unit vectors score `1.0`, orthogonal unit vectors score `0.0`. Bid search passes `tender_id` into the store filter before `top_k` neighbours are chosen (`FR-SRCH-4`); a closer bid on another tender must not occupy the only result slot. Organizer ownership remains `T-AUTH-4`.
+
 ---
 
 ## 8. Seed data

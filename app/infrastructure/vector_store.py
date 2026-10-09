@@ -79,6 +79,8 @@ class VectorStore(Protocol):
         where: dict | None = None,
     ) -> list[Match]: ...
 
+    def get(self, collection: str, ids: Sequence[str]) -> list[Match]: ...
+
 
 class ChromaVectorStore:
     """Implements `VectorStore` against Chroma running in server mode."""
@@ -220,6 +222,20 @@ class ChromaVectorStore:
         )
         return _to_matches(result)
 
+    def get(self, collection: str, ids: Sequence[str]) -> list[Match]:
+        """Load documents by id. Does not embed (`02-architecture.md` §6).
+
+        Absent ids are omitted. `distance` is 0.0 because a key lookup is not
+        a ranking; callers that need a score use `query`.
+        """
+        if not ids:
+            return []
+        result = self._collection(collection).get(
+            ids=list(ids),
+            include=["documents", "metadatas"],
+        )
+        return _to_get_matches(result, ids)
+
     def delete(self, collection: str, ids: Sequence[str]) -> None:
         """Vectors are a derived index, not business state, so deleting here
         breaks no event-sourcing rule: the seed script rebuilds them (`ENV-6`).
@@ -227,6 +243,24 @@ class ChromaVectorStore:
         if not ids:
             return
         self._collection(collection).delete(ids=list(ids))
+
+
+def _to_get_matches(result: Any, requested_ids: Sequence[str]) -> list[Match]:
+    """Chroma's `get` returns flat lists, unlike `query`, and not necessarily
+    in request order. Rebuild that order and drop ids the collection lacks."""
+    ids = result.get("ids") or []
+    documents = result.get("documents") or [""] * len(ids)
+    metadatas = result.get("metadatas") or [None] * len(ids)
+    found = {
+        match_id: Match(
+            id=match_id,
+            document=document or "",
+            metadata=dict(metadata or {}),
+            distance=0.0,
+        )
+        for match_id, document, metadata in zip(ids, documents, metadatas)
+    }
+    return [found[match_id] for match_id in requested_ids if match_id in found]
 
 
 def _to_matches(result: Any) -> list[Match]:

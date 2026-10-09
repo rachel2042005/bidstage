@@ -63,7 +63,8 @@ app/templates/ + app/static/  ← View       (Jinja2, Bootstrap 5 RTL)
 app/routes/                   ← Controller (thin: parse, authorize, dispatch)
         │
         ├── app/commands/     ← write side: validate, append events, project
-        └── app/queries/      ← read side: SELECT from read models only
+        ├── app/queries/      ← read side: SELECT from read models only
+        └── app/services/     ← application boundary over VectorStore
                 │
 app/domain/                   ← aggregates, invariants, scoring (no I/O)
 app/events/                   ← event definitions + event store
@@ -73,6 +74,8 @@ app/projections/              ← read models built from events
 Controllers contain no business logic. They authorize, build a command or query object, dispatch it, and render. A controller that computes a score or decides a disqualification is a defect.
 
 `app/domain/` imports nothing that performs I/O. Aggregates are pure functions over event lists, which is what makes `NFR-ES-3` and the unit tests in `06-tests.md` cheap.
+
+`app/services/` holds application services over ports that are not SQL read models. `SemanticSearchService` is that boundary for the vector store: query handlers and sub-agents call it, and it never imports `chromadb` (`NFR-VEC-5`). A query handler still does not open the events table (`NFR-CQRS-2`).
 
 ### Folder layout
 
@@ -89,6 +92,8 @@ app/
   config.py                   # Settings from .env
   commands/                   # write side
   queries/                    # read side
+  services/
+    semantic_search_service.py  # search over VectorStore; no chromadb import
   events/
     __init__.py               # re-exports EventStore, NewEvent, StoredEvent
     db.py                     # pyodbc connection + transaction()
@@ -119,6 +124,7 @@ scripts/
 tests/
   smoke_test_event_store.py
   smoke_test_vector_store.py
+  test_semantic_search_service.py
 specs/
 README.md                     # setup and the three-process startup order
 ```
@@ -235,9 +241,33 @@ class VectorStore(Protocol):
 
     def query(self, collection: str, text: str, k: int,
               where: dict | None = None) -> list[Match]: ...
+
+    def get(self, collection: str, ids: list[str]) -> list[Match]: ...
 ```
 
-Only `app/infrastructure/vector_store.py` imports `chromadb`. Sub-agents and query handlers depend on the protocol, so swapping to a hosted store is one new adapter plus a config value.
+`get` loads documents by id and does not embed. Ids that are absent are omitted. `distance` on those matches is unused, because a key lookup is not a ranking. Rubric retrieval depends on this: fetching `rubric:VENUE` must work when the embedding provider is down, and a filtered `query` would embed a dummy string to perform a key lookup.
+
+Only `app/infrastructure/vector_store.py` imports `chromadb`. Sub-agents and query handlers depend on `SemanticSearchService`, which depends on the protocol, so swapping to a hosted store is one new adapter plus a config value.
+
+### Semantic search service
+
+`app/services/semantic_search_service.py` is the application boundary over `VectorStore` (`FR-SRCH-4`, `FR-SRCH-5`, `NFR-VEC-3`).
+
+```python
+class SemanticSearchService:
+    def search_bids(self, query: str, tender_id: str | None = None,
+                    top_k: int = 5) -> list[dict]: ...
+    def get_rubric(self, requirement_type: str) -> dict | None: ...
+    def search_regulations(self, query: str, top_k: int = 3) -> list[dict]: ...
+```
+
+`search_bids` queries `bid_concepts`. When `tender_id` is given, the filter `{"tender_id": tender_id}` is passed into `query`, so the restriction is applied by the store before neighbours are chosen (`FR-SRCH-4`). Omitting `tender_id` searches across tenders. Organizer ownership is the caller's job (`FR-SRCH-6`, `T-AUTH-4`); this service takes no organizer id.
+
+`search_regulations` queries `regulations`.
+
+Both return hits `{id, text, metadata, score}` in the store's order (closest first). `score` is cosine similarity, `1 - distance`, where `distance` is the cosine distance the collections are created with. Higher is closer.
+
+`get_rubric` uppercases the requirement type and loads `rubric:{TYPE}` through `get`, one whole document (`NFR-VEC-3`, `T-VEC-3`). The type taxonomy is the closed set `VENUE`, `CONTENT`, `HOST`, `MUSIC`, `EXPERIENCE`; any other value raises `ValueError`. A known type with nothing stored returns `None`. The result is `{id, text, metadata}` — a key lookup has no score.
 
 Collections, content and chunking are specified in `00-overview.md` §7.
 
