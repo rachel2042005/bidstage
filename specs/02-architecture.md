@@ -63,7 +63,8 @@ app/templates/ + app/static/  ← View       (Jinja2, Bootstrap 5 RTL)
 app/routes/                   ← Controller (thin: parse, authorize, dispatch)
         │
         ├── app/commands/     ← write side: validate, append events, project
-        └── app/queries/      ← read side: SELECT from read models only
+        ├── app/queries/      ← read side: SELECT from read models only
+        └── app/services/     ← application boundary over VectorStore
                 │
 app/domain/                   ← aggregates, invariants, scoring (no I/O)
 app/events/                   ← event definitions + event store
@@ -73,6 +74,8 @@ app/projections/              ← read models built from events
 Controllers contain no business logic. They authorize, build a command or query object, dispatch it, and render. A controller that computes a score or decides a disqualification is a defect.
 
 `app/domain/` imports nothing that performs I/O. Aggregates are pure functions over event lists, which is what makes `NFR-ES-3` and the unit tests in `06-tests.md` cheap.
+
+`app/services/` holds application services over ports that are not SQL read models. `SemanticSearchService` is that boundary for the vector store: query handlers and sub-agents call it, and it never imports `chromadb` (`NFR-VEC-5`). A query handler still does not open the events table (`NFR-CQRS-2`).
 
 ### Folder layout
 
@@ -89,6 +92,8 @@ app/
   config.py                   # Settings from .env
   commands/                   # write side
   queries/                    # read side
+  services/
+    semantic_search_service.py  # search over VectorStore; no chromadb import
   events/
     __init__.py               # re-exports EventStore, NewEvent, StoredEvent
     db.py                     # pyodbc connection + transaction()
@@ -98,6 +103,9 @@ app/
   projections/                # read models, incl. rm_bid_for_assessment
   routes/                     # Flask blueprints
   domain/                     # Phase 3: aggregates, scoring
+  infrastructure/
+    vector_store.py           # Chroma adapter — the only chromadb import
+    embeddings.py             # OpenAI / Ollama embedding providers
   templates/base.html         # Hebrew RTL shell
   static/css/app.css
 agent/
@@ -107,12 +115,18 @@ agent/
 mcp_server/
   server.py                   # the two own FastMCP tools
 knowledge_base/
-  rubrics/  regulations/      # embedded by the seed script
+  rubrics/  regulations/      # embedded by scripts/seed_knowledge_base.py
 scripts/
+  run_chroma.ps1              # starts the vector store in server mode
+  reset_vector_store.py       # drops collections after a provider change
+  seed_knowledge_base.py      # embeds knowledge_base/ into rubrics and regulations
   seed.py                     # Phase 3: rebuilds SQL + Chroma (ENV-6)
 tests/
   smoke_test_event_store.py
+  smoke_test_vector_store.py
+  test_semantic_search_service.py
 specs/
+README.md                     # setup and the three-process startup order
 ```
 
 The FastMCP tools live in a top-level `mcp_server/` rather than under `agent/`, because they are a boundary the agent consumes rather than a part of it.
@@ -227,11 +241,60 @@ class VectorStore(Protocol):
 
     def query(self, collection: str, text: str, k: int,
               where: dict | None = None) -> list[Match]: ...
+
+    def get(self, collection: str, ids: list[str]) -> list[Match]: ...
 ```
 
-Only `infrastructure/vector_store.py` imports `chromadb`. Sub-agents and query handlers depend on the protocol, so swapping to a hosted store is one new adapter plus a config value.
+`get` loads documents by id and does not embed. Ids that are absent are omitted. `distance` on those matches is unused, because a key lookup is not a ranking. Rubric retrieval depends on this: fetching `rubric:VENUE` must work when the embedding provider is down, and a filtered `query` would embed a dummy string to perform a key lookup.
 
-Collections, content and chunking are specified in `00-overview.md` §7. Embeddings use OpenAI `text-embedding-3-small` at 1536 dimensions (`NFR-VEC-4`); the dimension is recorded in config because changing it invalidates every stored vector.
+Only `app/infrastructure/vector_store.py` imports `chromadb`. Sub-agents and query handlers depend on `SemanticSearchService`, which depends on the protocol, so swapping to a hosted store is one new adapter plus a config value.
+
+### Semantic search service
+
+`app/services/semantic_search_service.py` is the application boundary over `VectorStore` (`FR-SRCH-4`, `FR-SRCH-5`, `NFR-VEC-3`).
+
+```python
+class SemanticSearchService:
+    def search_bids(self, query: str, tender_id: str | None = None,
+                    top_k: int = 5) -> list[dict]: ...
+    def get_rubric(self, requirement_type: str) -> dict | None: ...
+    def search_regulations(self, query: str, top_k: int = 3) -> list[dict]: ...
+```
+
+`search_bids` queries `bid_concepts`. When `tender_id` is given, the filter `{"tender_id": tender_id}` is passed into `query`, so the restriction is applied by the store before neighbours are chosen (`FR-SRCH-4`). Omitting `tender_id` searches across tenders. Organizer ownership is the caller's job (`FR-SRCH-6`, `T-AUTH-4`); this service takes no organizer id.
+
+`search_regulations` queries `regulations`.
+
+Both return hits `{id, text, metadata, score}` in the store's order (closest first). `score` is cosine similarity, `1 - distance`, where `distance` is the cosine distance the collections are created with. Higher is closer.
+
+`get_rubric` uppercases the requirement type and loads `rubric:{TYPE}` through `get`, one whole document (`NFR-VEC-3`, `T-VEC-3`). The type taxonomy is the closed set `VENUE`, `CONTENT`, `HOST`, `MUSIC`, `EXPERIENCE`; any other value raises `ValueError`. A known type with nothing stored returns `None`. The result is `{id, text, metadata}` — a key lookup has no score.
+
+Collections, content and chunking are specified in `00-overview.md` §7.
+
+### Embedding providers
+
+Two, selected by `EMBEDDING_PROVIDER` (`NFR-VEC-4`). Both index Hebrew natively, which is the requirement that excludes every English-only model.
+
+| Provider | Endpoint | Model | Dim | Key | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `openai` (default) | `api.openai.com` | `text-embedding-3-small` | 1536 | required | No local process; subject to `ENV-1` |
+| `ollama` | `localhost:11434` | `qwen3-embedding:0.6b` | 1024 | none | Free, offline, bid text never leaves the machine |
+
+`app/infrastructure/embeddings.py` is the only importer of the OpenAI SDK for embeddings. One class serves both providers, because Ollama exposes an OpenAI-compatible `/v1/embeddings`; they differ only in base URL, model and key. Model and dimension are derived from the provider rather than configured beside it, so a switch cannot leave a mismatched pair.
+
+**The two are not interchangeable once documents are stored.** Vectors from different models are incomparable, and nothing downstream can detect it — retrieval simply returns the wrong documents. Each collection is therefore stamped with the model that built it, and the store raises rather than serving a collection built by another (`NFR-VEC-6`). `scripts/reset_vector_store.py` clears them; re-seed afterwards.
+
+### Distance metric
+
+All four collections are created with cosine distance (`{"hnsw:space": "cosine"}`), the conventional pairing with OpenAI embeddings. Chroma's own default is squared L2, and the metric is fixed at creation — correcting it later means dropping and re-embedding every collection. Collections are therefore created in exactly one place, `ensure_collections()`, which is idempotent; a collection created ad hoc elsewhere would silently get L2 and return subtly wrong neighbours.
+
+### Where embeddings are computed
+
+In the application process, never by the Chroma server. `vector_store.py` owns an OpenAI client built after `bootstrap.init()` and passes vectors to Chroma explicitly, with `embedding_function=None` on every collection.
+
+Two reasons, both structural. The server is started by a bare `chroma run` that no code of ours wraps, so `truststore.inject_into_ssl()` cannot be injected into it and any outbound call it made would fail against the filtering proxy (`ENV-1`). And leaving the embedding function unset would let Chroma fall back to its bundled ONNX MiniLM model, which is English-only and would degrade Hebrew retrieval without raising anything. A side benefit is that the Chroma server never receives the OpenAI key.
+
+This is also why `sentence-transformers`, and the PyTorch stack behind it, is absent from `requirements.txt`. `onnxruntime` arrives as a transitive dependency of `chromadb` itself, but the bundled embedding function is never constructed and no ONNX model is ever downloaded.
 
 ---
 
@@ -277,10 +340,12 @@ All secrets in `.env` (`NFR-SEC-1`), which is gitignored.
 
 | Variable | Purpose |
 | --- | --- |
-| `SQLSERVER_CONN` | Somee connection string (ODBC Driver 17) |
+| `SOMEE_DB_CONNECTION_STRING` | Somee connection string (ODBC Driver 17) |
 | `OPENAI_API_KEY` | Scoring and embeddings |
 | `CHROMA_HOST`, `CHROMA_PORT` | Vector store endpoint |
-| `EMBEDDING_MODEL`, `EMBEDDING_DIM` | `text-embedding-3-small`, `1536` |
+| `EMBEDDING_PROVIDER` | `openai` (default) or `ollama`; selects model and dimension |
+| `OLLAMA_BASE_URL` | Read only when the provider is `ollama`; defaults to `http://localhost:11434/v1` |
+| `EMBEDDING_MODEL`, `EMBEDDING_DIM` | Optional overrides for an unlisted model. Normally unset |
 | `TAVILY_API_KEY` | Via Tavily MCP |
 | `GMAIL_*` | Gmail MCP credentials |
 | `FLASK_SECRET_KEY` | Session signing |

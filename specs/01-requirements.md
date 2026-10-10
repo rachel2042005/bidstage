@@ -128,8 +128,9 @@ Administrator role and supplier approval workflow; payment or contracting after 
 | `NFR-VEC-1` *[6]* | Bid concepts, supplier portfolios, scoring rubrics and regulations are embedded into a vector database for semantic retrieval. |
 | `NFR-VEC-2` *[6]* | Four separate collections are used: `bid_concepts`, `portfolios`, `rubrics`, `regulations`. |
 | `NFR-VEC-3` *[6]* | Rubrics are stored unchunked, one document per requirement type. |
-| `NFR-VEC-4` *[6]* | The embedding model is multilingual so Hebrew is indexed natively: OpenAI `text-embedding-3-small`, 1536 dimensions. |
+| `NFR-VEC-4` *[6]* | The embedding model is multilingual so Hebrew is indexed natively. Two providers are supported, selected by `EMBEDDING_PROVIDER`: OpenAI `text-embedding-3-small` at 1536 dimensions (default), or local Ollama `qwen3-embedding:0.6b` at 1024 dimensions. An English-only model is never acceptable. |
 | `NFR-VEC-5` | The vector store sits behind a thin interface so it can be replaced by configuration. |
+| `NFR-VEC-6` | Each collection records the model that built it, and the store refuses to serve a collection built by a different model. Vectors from two models are not comparable, and the failure is otherwise undetectable: search simply returns the wrong documents. |
 | `NFR-CQRS-1` *[7]* | All state change flows through commands; all reads flow through queries. The two never share a model. |
 | `NFR-CQRS-2` *[7]* | Queries read exclusively from read models, never from the event stream. |
 | `NFR-CQRS-3` *[7]* | Read models are projected synchronously inside the command handler that appended the event. |
@@ -178,7 +179,7 @@ Verified on the development machine; see `00-overview.md` §13.
 | 4.4 dashboard | `FR-DASH-1` … `FR-DASH-5` |
 | 4.5 data entry | `FR-ENT-1` … `FR-ENT-8` |
 | 5 separate agent process | `NFR-AGT-2` |
-| 6 vector database | `NFR-VEC-1` … `NFR-VEC-5` |
+| 6 vector database | `NFR-VEC-1` … `NFR-VEC-6` |
 | 7 CQRS | `NFR-CQRS-1` … `NFR-CQRS-3` |
 | 8 Event Sourcing | `NFR-ES-1` … `NFR-ES-5` |
 | 9 external MCP | `NFR-MCP-1`, `NFR-MCP-2`, `FR-NOT-1` … `FR-NOT-4` |
