@@ -10,6 +10,8 @@ A verdict that echoes 9 fails every band below.
 T-AG-13 — a breached retrieved regulation caps the score at 0–4.
 T-AG-16 — verified capacity below the tender figure, with no breach, scores 3 or 4.
 T-AG-17 — a disproved capacity claim scores 0.
+T-AG-18 — an inconclusive capacity claim pins the proposal to 5–6.
+T-AG-19 — verified capacity that meets the tender, with no breach, pins the proposal to 7–10.
 """
 
 from __future__ import annotations
@@ -118,13 +120,15 @@ def _found(
     meets_tender_capacity: bool,
     regulation_breached: bool,
     claim: str,
+    proposed_score: int = 9,
 ) -> VenueAssessment:
-    status: CapacityClaim = "disproved" if capacity_claim == "disproved" else "verified"
     return VenueAssessment(
-        proposed_score=9,
+        proposed_score=proposed_score,
         justification=claim,
         sources=(_PAGE,),
-        verifications=(Verification(claim=claim, status=status, source=_PAGE),),
+        verifications=(
+            Verification(claim=claim, status=capacity_claim, source=_PAGE),
+        ),
         capacity_claim=capacity_claim,
         meets_tender_capacity=meets_tender_capacity,
         regulation_breached=regulation_breached,
@@ -210,3 +214,46 @@ def test_disproved_capacity_claim_scores_zero() -> None:
     assert verdict.requirement_id == "req-venue"
     assert type(verdict.score) is int
     assert verdict.score == 0
+
+
+def test_inconclusive_capacity_claim_scores_five_or_six() -> None:
+    """T-AG-18. Official capacity was not found. Model proposes 9."""
+    regulation = "הקיבולת הרשמית לא צוינה במסמך שנשלף."
+    page = "לא פורסמה קיבולת רשמית לאולם."
+    verdict = _evaluate(
+        answer="אולם הקאמרי, קיבולת מוצהרת 2000, בלי מסמך רשמי.",
+        regulation=regulation,
+        page=page,
+        found=_found(
+            capacity_claim="inconclusive",
+            meets_tender_capacity=False,
+            regulation_breached=False,
+            claim="The supplier claims 2000 seats and no official figure was found.",
+        ),
+    )
+
+    assert verdict.requirement_id == "req-venue"
+    assert type(verdict.score) is int
+    assert verdict.score in (5, 6)
+
+
+def test_verified_compliant_venue_scores_seven_to_ten() -> None:
+    """T-AG-19. Capacity verified, tender met, no breach. Model proposes 4."""
+    regulation = "התוכנית מקיימת את החובות שנשלפו."
+    page = "קיבולת רשמית: 8000 מושבים."
+    verdict = _evaluate(
+        answer="היכל התרבות, 8000 מושבים, שני פתחי יציאה ותיאום משטרה.",
+        regulation=regulation,
+        page=page,
+        found=_found(
+            capacity_claim="verified",
+            meets_tender_capacity=True,
+            regulation_breached=False,
+            proposed_score=4,
+            claim="Official capacity is 8000 and the plan meets the retrieved rules.",
+        ),
+    )
+
+    assert verdict.requirement_id == "req-venue"
+    assert type(verdict.score) is int
+    assert verdict.score in (7, 8, 9, 10)
