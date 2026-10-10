@@ -316,17 +316,18 @@ get_tender_requirements(tender_id: str) -> {
 
 submit_requirement_score(
     bid_id: str, requirement_id: str,
-    score: int,                    # 0..10
+    score: int,                    # real int, 0..10 inclusive
     justification: str,
-    sources: list[str]
+    sources: list[str],
+    rubric_version: str
 ) -> { accepted: bool, event_version: int }
 ```
 
 `get_tender_requirements(tender_id, query)` copies only the fields in the shape above, so a price column on the view is dropped (`T-AG-2`). `approved_hosts` is attached only when a requirement has type `HOST` (`T-AG-3`); the names themselves come from the seeded reference table, which is why a third tool is unnecessary (`FR-EVAL-2`). A blank `tender_id` raises `ValueError` before the query runs. An unknown id raises `TenderNotFound`, a `LookupError`, and the message includes the id.
 
-FastMCP registers a wrapper of the same tool name that accepts only `tender_id`, so the query dependency is not part of the tool schema. `python -m mcp_server` starts the server on stdio. `bootstrap.init()` is the first statement in `mcp_server/server.py`, and the FastMCP import follows it.
+FastMCP registers a wrapper per tool. `get_tender_requirements` accepts only `tender_id`, and `submit_requirement_score` accepts `bid_id`, `requirement_id`, `score`, `justification`, `sources`, and `rubric_version`. The query and the command handler stay out of the tool schema. `python -m mcp_server` starts the server on stdio. `bootstrap.init()` is the first statement in `mcp_server/server.py`, and the FastMCP import follows it.
 
-`submit_requirement_score` is a command, not a write: it validates the range, appends `RequirementScored`, and projects. It is idempotent on `(bid_id, requirement_id)` — a retry after a timeout must not double-score.
+`submit_requirement_score(bid_id, requirement_id, score, justification, sources, rubric_version, handler)` validates the arguments, then dispatches a `ScoreRequirement` command. `rubric_version` is an argument because every `RequirementScored` records it (`03-domain-events.md` §2) and this tool is the only writer; §7 previously omitted it. `tender_id` is not an argument: `BidSubmitted` already stores it, and the handler reads it from the bid stream. `scored_by` is stamped `"agent"`. `sources` stays, because `FR-EVAL-2` and `FR-DET-2` render them; an empty list is accepted here, and `T-AG-7` remains the orchestrator's check against `verifications`. A score must be a real `int` in `0..10` (`T-AG-5`, `T-AG-6`); `bool` is rejected. Blank `bid_id`, `requirement_id`, `justification`, or `rubric_version`, and a blank source entry, raise `ValueError` before the handler runs. The handler's `ScoringRejected` propagates unchanged. Idempotency on `(bid_id, requirement_id)` and `INV-2` / `INV-4` belong to the handler, which is not built yet.
 
 ---
 

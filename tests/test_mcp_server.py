@@ -1,14 +1,15 @@
-"""Own MCP tool get_tender_requirements (T-AG-2, T-AG-3).
+"""Own MCP tools (`T-AG-2`, `T-AG-3`, `T-AG-5`, `T-AG-6`).
 
-Seam: the pure function, against an in-memory TenderRequirementsQuery.
-FastMCP transport and SQL projections are outside this file.
+Seam: the pure functions, against in-memory query and command doubles.
+FastMCP transport and SQL stay outside this file.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from mcp_server.server import TenderNotFound, get_tender_requirements
+from app.commands.score_requirement import ScoreRequirement, ScoringRejected
+from mcp_server.server import TenderNotFound, get_tender_requirements, submit_requirement_score
 
 _TENDER = {
     "name": "טקס פרסי התרבות",
@@ -120,3 +121,112 @@ def test_get_tender_requirements_raises_when_the_tender_is_missing() -> None:
 
     with pytest.raises(TenderNotFound, match="tender-404"):
         get_tender_requirements("tender-404", query)
+
+
+class RecordingScoreHandler:
+    """Remembers the command and returns a fixed stream version."""
+
+    def __init__(self) -> None:
+        self.command: ScoreRequirement | None = None
+
+    def handle(self, command: ScoreRequirement) -> dict:
+        self.command = command
+        return {"accepted": True, "event_version": 3}
+
+
+def test_submit_requirement_score_dispatches_the_recorded_score() -> None:
+    """The handler receives the §7 command, including scored_by agent."""
+    handler = RecordingScoreHandler()
+
+    result = submit_requirement_score(
+        "bid-1",
+        "req-venue",
+        8,
+        "The hall seats 2,000 and the plan matches the regulations.",
+        ["https://example.com/hall"],
+        "1",
+        handler,
+    )
+
+    assert result == {"accepted": True, "event_version": 3}
+    assert handler.command == ScoreRequirement(
+        bid_id="bid-1",
+        requirement_id="req-venue",
+        score=8,
+        justification="The hall seats 2,000 and the plan matches the regulations.",
+        sources=("https://example.com/hall",),
+        rubric_version="1",
+        scored_by="agent",
+    )
+
+
+class _HandlerThatMustNotRun:
+    def handle(self, command: ScoreRequirement) -> dict:
+        raise AssertionError(f"handle was called with {command!r}")
+
+
+def test_submit_requirement_score_rejects_a_score_outside_zero_to_ten() -> None:
+    """T-AG-5, T-AG-6: out of range, bool, and non-integers never dispatch."""
+    handler = _HandlerThatMustNotRun()
+
+    for score in (-1, 11, True, 7.5, "8"):
+        with pytest.raises(ValueError, match="score"):
+            submit_requirement_score(
+                "bid-1",
+                "req-venue",
+                score,  # type: ignore[arg-type]
+                "A written justification.",
+                ["https://example.com/hall"],
+                "1",
+                handler,
+            )
+
+
+class _RejectingScoreHandler:
+    def handle(self, command: ScoreRequirement) -> dict:
+        raise ScoringRejected("tender still open")
+
+
+def test_submit_requirement_score_propagates_a_rejected_command() -> None:
+    """An invariant failure stays the handler's exception."""
+    with pytest.raises(ScoringRejected, match="tender still open"):
+        submit_requirement_score(
+            "bid-1",
+            "req-venue",
+            8,
+            "A written justification.",
+            ["https://example.com/hall"],
+            "1",
+            _RejectingScoreHandler(),
+        )
+
+
+def test_submit_requirement_score_rejects_blank_text() -> None:
+    """Blank ids, justification, rubric version, or source entries never dispatch."""
+    handler = _HandlerThatMustNotRun()
+    text = "A written justification."
+    source = ["https://example.com/hall"]
+    cases = (
+        ("bid_id", "", "req-venue", text, source, "1"),
+        ("bid_id", "   ", "req-venue", text, source, "1"),
+        ("requirement_id", "bid-1", "", text, source, "1"),
+        ("requirement_id", "bid-1", "   ", text, source, "1"),
+        ("justification", "bid-1", "req-venue", "", source, "1"),
+        ("justification", "bid-1", "req-venue", "   ", source, "1"),
+        ("rubric_version", "bid-1", "req-venue", text, source, ""),
+        ("rubric_version", "bid-1", "req-venue", text, source, "   "),
+        ("sources", "bid-1", "req-venue", text, [""], "1"),
+        ("sources", "bid-1", "req-venue", text, ["   "], "1"),
+    )
+
+    for field, bid_id, requirement_id, justification, sources, rubric_version in cases:
+        with pytest.raises(ValueError, match=field):
+            submit_requirement_score(
+                bid_id,
+                requirement_id,
+                8,
+                justification,
+                sources,
+                rubric_version,
+                handler,
+            )

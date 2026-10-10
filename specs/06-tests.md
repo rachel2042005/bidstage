@@ -143,7 +143,7 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 | `T-AG-13` | Venue capacity below the regulatory limit for the declared attendance | Score capped in the 0–4 band (`05` §5) |
 | `T-AG-14` | Any arithmetic inside an agent module | Absent; quality computed in `app/domain/scoring.py` (project rule 2) |
 
-`tests/test_mcp_server.py` covers `T-AG-2` and `T-AG-3` against an in-memory `GetTenderRequirements` query. A price column on the view is absent from the payload. A `HOST` requirement includes the host list the query supplied. A blank id raises `ValueError` before lookup. An unknown id raises `TenderNotFound`.
+`tests/test_mcp_server.py` covers `T-AG-2` and `T-AG-3` against an in-memory `GetTenderRequirements` query. A price column on the view is absent from the payload. A `HOST` requirement includes the host list the query supplied. A blank id raises `ValueError` before lookup. An unknown id raises `TenderNotFound`. The same file covers `submit_requirement_score`: the dispatched `ScoreRequirement` is a known literal and the handler's `{"accepted": True, "event_version": 3}` is returned unchanged; scores outside 0–10, bools, and non-integers raise `ValueError` (`T-AG-5`, `T-AG-6`); blank text fields raise `ValueError` before dispatch; `ScoringRejected` propagates. `T-AG-4` waits for the SQL handler.
 
 ### Score consistency
 
