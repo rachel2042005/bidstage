@@ -143,6 +143,8 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 | `T-AG-13` | Venue capacity below the regulatory limit for the declared attendance | Score capped in the 0–4 band (`05` §5) |
 | `T-AG-14` | Any arithmetic inside an agent module | Absent; quality computed in `app/domain/scoring.py` (project rule 2) |
 
+`tests/test_mcp_server.py` covers `T-AG-2` and `T-AG-3` against an in-memory `GetTenderRequirements` query. A price column on the view is absent from the payload. A `HOST` requirement includes the host list the query supplied. A blank id raises `ValueError` before lookup. An unknown id raises `TenderNotFound`.
+
 ### Score consistency
 
 | ID | Case | Expected |

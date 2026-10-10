@@ -114,6 +114,7 @@ agent/
   subagents/                  # Phase 4: one per requirement type
 mcp_server/
   server.py                   # the two own FastMCP tools
+  __main__.py                 # python -m mcp_server (stdio)
 knowledge_base/
   rubrics/  regulations/      # embedded by scripts/seed_knowledge_base.py
 scripts/
@@ -125,6 +126,7 @@ tests/
   smoke_test_event_store.py
   smoke_test_vector_store.py
   test_semantic_search_service.py
+  test_mcp_server.py
 specs/
 README.md                     # setup and the three-process startup order
 ```
@@ -176,10 +178,13 @@ A query handler that opens the events table is a defect (`NFR-CQRS-2`).
 | `GetBidComparison` | `rm_bid_ranking` |
 | `GetDashboardStats` | `rm_dashboard` |
 | `GetBidAssessment` | `rm_requirement_score` |
+| `GetTenderRequirements` | `rm_tender_detail`, `rm_requirement`, approved-hosts reference table |
 
 `rm_dashboard` holds bid counts and status per tender so `FR-DASH-5` holds. Deadline countdowns are rendered client-side from the stored deadline; the server stores no ticking value.
 
 One further projection serves no query: `rm_bid_for_assessment` is the agent's work queue and bid-content source (`05-agent-spec.md` §2). It carries `bid_id`, `tender_id`, `concept` and the per-requirement responses, and deliberately **omits price**.
+
+`GetTenderRequirements` is the read behind the MCP tool in §7. It is separate from `GetTenderDetails`, because that UI query may later carry bids and this one must not be able to. The handler returns `{tender, requirements, approved_hosts}`, or nothing when the tender is absent. The protocol is `app/queries/tender_requirements.py`. Its SQL handler arrives with the projections; until then the tool is exercised against an in-memory query.
 
 ---
 
@@ -317,7 +322,9 @@ submit_requirement_score(
 ) -> { accepted: bool, event_version: int }
 ```
 
-`get_tender_requirements` returns no bid prices, by construction. `approved_hosts` is read from a seeded reference table, which is why a third tool is unnecessary (`FR-EVAL-2`, host list ownership).
+`get_tender_requirements(tender_id, query)` copies only the fields in the shape above, so a price column on the view is dropped (`T-AG-2`). `approved_hosts` is attached only when a requirement has type `HOST` (`T-AG-3`); the names themselves come from the seeded reference table, which is why a third tool is unnecessary (`FR-EVAL-2`). A blank `tender_id` raises `ValueError` before the query runs. An unknown id raises `TenderNotFound`, a `LookupError`, and the message includes the id.
+
+FastMCP registers a wrapper of the same tool name that accepts only `tender_id`, so the query dependency is not part of the tool schema. `python -m mcp_server` starts the server on stdio. `bootstrap.init()` is the first statement in `mcp_server/server.py`, and the FastMCP import follows it.
 
 `submit_requirement_score` is a command, not a write: it validates the range, appends `RequirementScored`, and projects. It is idempotent on `(bid_id, requirement_id)` — a retry after a timeout must not double-score.
 
