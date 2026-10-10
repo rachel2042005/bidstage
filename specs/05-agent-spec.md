@@ -101,6 +101,14 @@ Three checks in one score, per `00-overview.md` §6:
 
 A safety or licensing shortfall caps the score in the 0–4 band regardless of how well the venue reads, because a non-compliant venue cannot host the event. Folding this in is what let `SAFETY` and `CAPACITY` be dropped as separate types without orphaning the regulations knowledge base.
 
+`evaluate_venue` in `agent/subagents/venue.py` is that sub-agent:
+
+```python
+evaluate_venue(requirement, answer, rubric, tender, search, web, model) -> RequirementVerdict
+```
+
+The orchestrator passes the requirement, the supplier's answer, the whole rubric, and tender context (`name`, `event_date`, `region`). `search` is `SemanticSearchService`. `web` is a search port. `model` proposes the integer at temperature 0 and reports three findings: `capacity_claim` (`verified`, `disproved`, or `inconclusive`), `meets_tender_capacity`, and `regulation_breached`. The function applies `knowledge_base/rubrics/venue.md`'s first-match rule before it returns the §6 verdict: a disproved capacity claim scores 0; a breached retrieved obligation caps the score at 4; verified capacity below the tender figure, with no breach, scores 3 or 4. When none of those fire, the proposed integer stands. That adjustment is the rubric constraint on this one score. Quality, price, and rank stay in `app/domain/scoring.py`.
+
 ### `HOST`
 
 The approved host list arrives inside `get_tender_requirements`, so no third tool is needed. A host absent from the list fails the requirement outright — score 0 — since approval is categorical, not a matter of degree. A listed host with a same-date conflict found via Tavily scores in the 3–4 band: approved, but likely unavailable.

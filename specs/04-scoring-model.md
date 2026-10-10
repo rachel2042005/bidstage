@@ -15,6 +15,8 @@ This is the part of the system a reviewer will probe hardest, so every value her
 
 The LLM contributes **only** the per-requirement integers. Every arithmetic step is ordinary code (`NFR-DET-1`), which is both a project rule and the reason the model below is reproducible.
 
+The venue sub-agent pins that integer to the band in `knowledge_base/rubrics/venue.md` when the model's own findings require it (`05-agent-spec.md` §5, `T-AG-13`, `T-AG-16`, `T-AG-17`). Quality, price, and final score stay the formulas in §3–§5.
+
 ---
 
 ## 2. Rubric
