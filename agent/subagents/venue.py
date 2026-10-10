@@ -10,9 +10,10 @@ in front of Tavily. `model` proposes a 0–10 integer and three findings.
 `evaluate_venue` then applies the rubric's first-match rule:
 
 1. `capacity_claim == "disproved"` → score 0.
-2. `regulation_breached` → score capped at 4.
+2. `regulation_breached` → the proposal is pinned to 0–4.
 3. Verified capacity with `meets_tender_capacity` false and no breach → 3 or 4.
-4. Otherwise the proposed integer stands.
+4. `capacity_claim == "inconclusive"` → the proposal is pinned to 5–6.
+5. Verified capacity that meets the tender, with no breach → the proposal is pinned to 7–10.
 
 Quality, price, and rank stay in `app/domain/scoring.py` (`NFR-DET-1`).
 """
@@ -132,4 +133,89 @@ def evaluate_venue(
     model: VenueModel,
 ) -> RequirementVerdict:
     """Score one VENUE requirement (`T-AG-13`, `T-AG-16`, `T-AG-17`)."""
-    raise NotImplementedError("VENUE evaluation is not implemented.")
+    regulations = _regulation_texts(
+        search.search_regulations(_regulation_query(requirement, answer, tender))
+    )
+    pages = web.search(_web_query(requirement, answer, tender))
+    assessment = model.assess(
+        VenueMaterial(
+            requirement=requirement,
+            answer=answer,
+            rubric_text=rubric.text,
+            tender=tender,
+            regulations=regulations,
+            web_results=pages,
+        )
+    )
+    return RequirementVerdict(
+        requirement_id=requirement.id,
+        score=_apply(assessment),
+        justification=assessment.justification,
+        sources=assessment.sources,
+        verifications=assessment.verifications,
+    )
+
+
+def _regulation_query(
+    requirement: VenueRequirement, answer: str, tender: TenderContext
+) -> str:
+    return "\n".join(
+        ("VENUE", tender.name, tender.region, tender.event_date, requirement.description, answer)
+    )
+
+
+def _web_query(
+    requirement: VenueRequirement, answer: str, tender: TenderContext
+) -> str:
+    return "\n".join(
+        (
+            "official capacity licensing accessibility",
+            "VENUE",
+            tender.name,
+            tender.region,
+            tender.event_date,
+            requirement.description,
+            answer,
+        )
+    )
+
+
+def _regulation_texts(hits: list[dict]) -> tuple[str, ...]:
+    return tuple(
+        text
+        for hit in hits
+        if isinstance(text := hit.get("text"), str) and text.strip()
+    )
+
+
+def _apply(assessment: VenueAssessment) -> int:
+    """First matching rubric rule. The proposal is pinned into that band."""
+    proposed = _proposed_score(assessment.proposed_score)
+    claim = assessment.capacity_claim
+    if claim == "disproved":
+        return 0
+    if assessment.regulation_breached:
+        return _pin(proposed, 0, 4)
+    if claim == "verified" and not assessment.meets_tender_capacity:
+        return _pin(proposed, 3, 4)
+    if claim == "inconclusive":
+        return _pin(proposed, 5, 6)
+    if claim == "verified":
+        return _pin(proposed, 7, 10)
+    raise ValueError(f"Unknown capacity claim {claim!r}.")
+
+
+def _proposed_score(score: int) -> int:
+    if type(score) is not int or not 0 <= score <= 10:
+        raise ValueError(
+            f"proposed score must be an integer from 0 to 10, got {score!r}."
+        )
+    return score
+
+
+def _pin(score: int, low: int, high: int) -> int:
+    if score < low:
+        return low
+    if score > high:
+        return high
+    return score
