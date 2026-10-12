@@ -35,7 +35,7 @@ Reproduces `04-scoring-model.md` exactly. These are table-driven.
 | `T-SC-6` | Final score B, α = 0.6 | 84.4 |
 | `T-SC-7` | Ranking order | B above A |
 | `T-SC-8` | Disqualified cheaper bid excluded from the price pool | A and B unchanged from `T-SC-3`/`T-SC-5` |
-| `T-SC-9` | Same bid set with the disqualified price wrongly included | A 71.4, B 72.9 — asserts the variant in `04` §7 and guards the boundary |
+| `T-SC-9` | Same bid set with the disqualified price wrongly included | A 71.4, B 73.0 — asserts the variant in `04` §7 and guards the boundary |
 | `T-SC-10` | Threshold requirement scoring 5 | disqualified, remaining requirements unscored |
 | `T-SC-11` | Threshold requirement scoring 6 | passes |
 | `T-SC-12` | Quality 59.9 with all thresholds passed | disqualified by floor |
@@ -46,10 +46,11 @@ Reproduces `04-scoring-model.md` exactly. These are table-driven.
 | `T-SC-17` | Tie on final and quality | earlier submission ranks first |
 | `T-SC-18` | Weights summing to 99 or 101 | publication rejected (`FR-ENT-3`) |
 | `T-SC-19` | No rounding before final multiplication | full-precision path differs from a pre-rounded one and the former is used |
+| `T-SC-20` | `price_score` given 0, −1, or a bool | `ValueError`; a price must be an integer greater than 0 |
 
 `T-SC-9` is the most valuable test in the file: it is the only one that fails if someone "simplifies" the price pool back to all bids.
 
-`tests/test_scoring.py` covers `T-SC-1` and `T-SC-2` at `quality`. The expected values are the literals 82.0 and 74.0. Price score and final score stay untested here.
+`tests/test_scoring.py` covers `T-SC-1` and `T-SC-2` at `quality`. The expected values are the literals 82.0 and 74.0. The same file covers `price_score`, `final_score`, and `rank_bids`: `T-SC-4` and `T-SC-3` for the price scores 100.0 and 77.8, `T-SC-6` and `T-SC-5` for the finals 84.4 and 80.3, `T-SC-19` so A's final is not `0.6 × 82 + 0.4 × 77.8`, `T-SC-7` for B ranking above A, `T-SC-8` and `T-SC-9` for the qualified-only pool, and `T-SC-20` for a non-positive price. Displayed figures use `round(value, 1)`. The computed values stay at full precision.
 
 ---
 

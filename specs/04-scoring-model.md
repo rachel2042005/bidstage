@@ -78,6 +78,8 @@ Computed only after `PricesRevealed`.
 
 \(P_{\min}^{\text{qualified}}\) is the lowest price among **qualified** bids only — those passing both gates in §4. A disqualified bid never influences another bid's price score, even when its price was lowest overall. Range is \((0, 100]\), reaching 100 only for the cheapest qualified bid.
 
+Both prices are integers greater than 0. A bool, zero, or a negative raises `ValueError` before the division (`T-SC-20`).
+
 ---
 
 ## 6. Final score
@@ -126,7 +128,7 @@ Lowest qualified price = ₪700,000.
 
 ### Variant: the cheapest bid is disqualified
 
-Add Supplier C at ₪500,000 who scores 4 on a threshold `VENUE` requirement. C is disqualified at the first gate and never scored further. \(P_{\min}^{\text{qualified}}\) stays ₪700,000, so A and B keep the scores above. Had C's price entered the pool, A would have dropped to 0.6(82) + 0.4(55.6) = 71.4 and B to 0.6(74) + 0.4(71.4) = 72.9 — both distorted by a bid that was never eligible. This is the concrete reason for the qualified-only boundary.
+Add Supplier C at ₪500,000 who scores 4 on a threshold `VENUE` requirement. C is disqualified at the first gate and never scored further. \(P_{\min}^{\text{qualified}}\) stays ₪700,000, so A and B keep the scores above. Had C's price entered the pool, the unrounded scores would be \(500/900 \times 100\) and \(500/700 \times 100\). Displayed to one decimal, A drops to 0.6(82) + 0.4(55.555…) = **71.4** and B to 0.6(74) + 0.4(71.428…) = **73.0** — both distorted by a bid that was never eligible. The one-decimal figure 72.9 does not come from either the unrounded formula or from rounding the price score to 71.4 first. This is the concrete reason for the qualified-only boundary.
 
 ---
 
