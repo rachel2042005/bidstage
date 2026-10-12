@@ -58,7 +58,7 @@ def register_submit():
     display_name = request.form.get("display_name", "")
     role = request.form.get("role", "")
     try:
-        with unit_of_work() as (store, users, _tenders):
+        with unit_of_work() as (store, users, _tenders, _bids):
             user_id = register_user(
                 store,
                 users,
@@ -102,7 +102,7 @@ def login_submit():
     email = request.form.get("email", "")
     password = request.form.get("password", "")
     try:
-        with unit_of_work() as (store, users, _tenders):
+        with unit_of_work() as (store, users, _tenders, _bids):
             user_id = authenticate_user(
                 store, users, AuthenticateUser(email=email, password=password)
             )

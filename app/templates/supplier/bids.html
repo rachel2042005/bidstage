@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}ההצעות שלי · BidStage{% endblock %}
+{% block content %}
+<h1 class="h3">ההצעות שלי</h1>
+{% if bids %}
+<div class="list-group">
+  {% for bid in bids %}
+  <a class="list-group-item list-group-item-action" href="{{ url_for('tenders.supplier_tender', tender_id=bid.tender_id) }}">
+    <div class="d-flex justify-content-between align-items-center">
+      <strong>{{ bid.tender_name }}</strong>
+      <span class="badge text-bg-secondary">{{ bid_status_labels[bid.status] }}</span>
+    </div>
+    <div class="small text-muted">
+      הוגשה ב-<span class="ltr-numeric">{{ bid.submitted_at|local_dt }}</span>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<p>עדיין אין הצעות.</p>
+{% endif %}
+{% endblock %}

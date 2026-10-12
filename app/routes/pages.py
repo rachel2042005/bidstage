@@ -8,6 +8,7 @@ from flask import Blueprint, render_template, request
 
 from app.domain.tender import DRAFT, EVENT_TYPES, OPEN
 from app.domain.user import ORGANIZER, SUPPLIER
+from app.queries.get_bid import bid_count
 from app.queries.search_tenders import search_tenders
 from app.routes.access import current_user_id, require_role
 from app.routes.services import unit_of_work
@@ -27,13 +28,14 @@ def organizer_home():
     status = request.args.get("status", "").strip()
     if status not in {DRAFT, OPEN}:
         status = ""
-    with unit_of_work() as (_store, _users, tenders):
+    with unit_of_work() as (_store, _users, tenders, bids):
         rows = search_tenders(
             tenders,
             organizer_id=current_user_id(),
             status=status or None,
             keyword=keyword or None,
         )
+        counts = {row.tender_id: bid_count(bids, row.tender_id) for row in rows}
     if keyword or status:
         empty_message = "אין מכרזים התואמים לחיפוש."
     else:
@@ -45,6 +47,7 @@ def organizer_home():
         show_status=True,
         empty_message=empty_message,
         filters={"q": keyword, "status": status},
+        bid_counts=counts,
     )
 
 
@@ -56,7 +59,7 @@ def supplier_home():
     keyword = request.args.get("q", "").strip()
     event_date_from = _optional_date(request.args.get("event_date_from", ""))
     event_date_to = _optional_date(request.args.get("event_date_to", ""))
-    with unit_of_work() as (_store, _users, tenders):
+    with unit_of_work() as (_store, _users, tenders, _bids):
         rows = search_tenders(
             tenders,
             status=OPEN,

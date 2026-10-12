@@ -13,6 +13,9 @@
       · {{ tender.region }}
       · <span class="ltr-numeric">{{ tender.event_date|event_day }}</span>
       · הגשה עד <span class="ltr-numeric">{{ tender.deadline|local_dt }}</span>
+      {% if bid_counts is defined %}
+      · <span class="ltr-numeric">{{ bid_counts.get(tender.tender_id, 0) }}</span> הצעות
+      {% endif %}
     </div>
   </a>
   {% endfor %}
