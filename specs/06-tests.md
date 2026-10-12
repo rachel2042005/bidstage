@@ -49,6 +49,8 @@ Reproduces `04-scoring-model.md` exactly. These are table-driven.
 
 `T-SC-9` is the most valuable test in the file: it is the only one that fails if someone "simplifies" the price pool back to all bids.
 
+`tests/test_scoring.py` covers `T-SC-1` and `T-SC-2` at `quality`. The expected values are the literals 82.0 and 74.0. Price score and final score stay untested here.
+
 ---
 
 ## 3. Domain — event sourcing
@@ -146,13 +148,16 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 | `T-AG-17` | The supplier's capacity claim is disproved; the model proposes 9 | Score is 0 |
 | `T-AG-18` | The capacity claim is inconclusive; the model proposes 9 | Score is 5 or 6 |
 | `T-AG-19` | Capacity is verified, meets the tender, and breaches nothing; the model proposes 4 | Score is an integer in 7–10 |
-| `T-AG-20` | Orchestrator scores a tender that also has a `CONTENT` requirement | One `RequirementScored` command, for the `VENUE` requirement; `rubric_version` is the stored rubric's |
+| `T-AG-20` | Orchestrator scores a tender whose `VENUE` threshold scores 9, followed by `CONTENT` and `EXPERIENCE` | Three `RequirementScored` commands, in list order; each `rubric_version` is that type's stored rubric |
 | `T-AG-21` | Schedule and concept are both present and on-theme, the central names are independently verified, and the model proposes 4 | Score is 9 or 10 (`05` §5) |
 | `T-AG-22` | The schedule contradicts itself beside a relevant concept, and the model proposes 9 | Score is 3 or 4 |
 | `T-AG-23` | A named performer or work is disproved, and the model proposes 9 | Score is 0 |
 | `T-AG-24` | Three or more outdoor or stadium productions are verified, none are disproved, and the model proposes 4 | Score is 9 or 10 (`05` §5) |
 | `T-AG-25` | Outdoor or stadium events are claimed, none are verified and none are disproved, and the model proposes 9 | Score is 5 or 6 |
 | `T-AG-26` | One production is disproved while three outdoor shows are verified, and the model proposes 9 | Score is 0 |
+| `T-AG-27` | `run_once` claims one bid whose three requirements score 9 | `QualityAssessmentCompleted` with quality 90.0; a second claim returns nothing |
+| `T-AG-28` | The `VENUE` threshold scores 4 | `BidDisqualified` with `reason` `threshold` and `failed_requirement_id`; later models are not assessed |
+| `T-AG-29` | Every requirement is scored and quality is 50.0 | `BidDisqualified` with `reason` `quality_floor` and `quality_score` 50.0; no `failed_requirement_id` |
 
 `tests/test_mcp_server.py` covers `T-AG-2` and `T-AG-3` against an in-memory `GetTenderRequirements` query. A price column on the view is absent from the payload. A `HOST` requirement includes the host list the query supplied. A blank id raises `ValueError` before lookup. An unknown id raises `TenderNotFound`. The same file covers `submit_requirement_score`: the dispatched `ScoreRequirement` is a known literal and the handler's `{"accepted": True, "event_version": 3}` is returned unchanged; scores outside 0–10, bools, and non-integers raise `ValueError` (`T-AG-5`, `T-AG-6`); blank text fields raise `ValueError` before dispatch; `ScoringRejected` propagates. `T-AG-4` waits for the SQL handler.
 
@@ -162,7 +167,9 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 
 `tests/test_experience_evaluator.py` covers `T-AG-24`, `T-AG-25`, and `T-AG-26` at `evaluate_experience`. Portfolio search, web search, and the model are fakes. `search_portfolios` returns the supplier's text only when `supplier_id` matches. The model reports the constraining finding only when it was given the whole rubric plus that text and the web page. `T-AG-24` proposes 4, which sits below the 9–10 band. `T-AG-26` also reports three verified outdoor shows, so a first-match that skips the disproved-production rule would pin the score into 9–10.
 
-`tests/test_venue_orchestrator.py` covers `T-AG-20` at `score_venue_requirement`. `get_tender_requirements` and `submit_requirement_score` run against in-memory doubles. The rubric is loaded through `SemanticSearchService` from an in-memory store. Web search and the model are fakes. The model reports a compliant venue only when the requirement, the tender, the whole rubric, and both evidence texts arrived; otherwise it reports a breach and the score would be 4.
+`tests/test_orchestrator.py` covers `T-AG-20` and `T-AG-8` at `score_bid`. `get_tender_requirements` and `submit_requirement_score` run against in-memory doubles. Each rubric is loaded through `SemanticSearchService` from an in-memory store. Portfolio search, regulation search, bid search, web search, and the three models are fakes. A model reports a score of 9 only when its requirement, the tender, the whole rubric, and both evidence texts arrived. `T-AG-20` keeps `VENUE` as a threshold that scores 9, so the later two requirements are still dispatched. `T-AG-8` makes that same threshold score 4; the `CONTENT` and `EXPERIENCE` models are not assessed.
+
+`tests/test_runner.py` covers `T-AG-27`, `T-AG-28`, and `T-AG-29` at `run_once`. The queue, the score handler, and the completion handler are in-memory. `T-AG-27` uses weights 40/30/30 and three scores of 9, so quality is the literal 90.0. `T-AG-29` uses scores 5, 4, and 6, which the pinned bands can produce, and quality is the literal 50.0.
 
 ### Score consistency
 

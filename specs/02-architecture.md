@@ -42,7 +42,7 @@ Three processes run side by side. Keeping them separate is what satisfies *[5]*,
 Gmail MCP (notifications) ◀── Web process only
 ```
 
-The agent never connects to the web process. It reads its work queue and bid content from one purpose-built read model, `rm_bid_for_assessment`, and otherwise touches domain state only through the two MCP tools in §7. That read model **has no price column**, so `NFR-AGT-4` holds structurally: the price is absent from the agent's only source of bid data rather than merely unread. Writes go solely through `submit_requirement_score`.
+The agent never connects to the web process. It reads its work queue and bid content from one purpose-built read model, `rm_bid_for_assessment`, and otherwise touches domain state only through the two MCP tools in §7 and the in-process `CompleteAssessment` command. That read model **has no price column**, so `NFR-AGT-4` holds structurally: the price is absent from the agent's only source of bid data rather than merely unread. Requirement scores go solely through `submit_requirement_score`. `BidDisqualified` and `QualityAssessmentCompleted` go through `CompleteAssessment`, which is not an MCP tool. Claiming a bid is an operational take on the assessment queue, not a domain event.
 
 Gmail is driven by the web process, not the agent, so notifications are tied to committed commands.
 
