@@ -77,6 +77,8 @@ Orchestrator
 
 Step 7 is arithmetic in `app/domain/scoring.py`, not a model call (`NFR-DET-1`).
 
+`score_venue_requirement` in `agent/orchestrator.py` is steps 2–5 for the tender's one `VENUE` requirement (`T-AG-20`). The supplier's answer is an argument; claiming the bid from `rm_bid_for_assessment` arrives with that projection. The function calls `get_tender_requirements` and `submit_requirement_score` through the same Python functions the MCP tools wrap, loads `rubric:VENUE` whole, and passes tender `name`, `event_date`, and `region` into `evaluate_venue`. `rubric_version` on the submitted command is that document's metadata. Other requirement types are left unscored. The threshold short-circuit and the terminal event stay in the runner.
+
 ---
 
 ## 5. Sub-agents
@@ -86,7 +88,7 @@ Each receives the requirement, the supplier's answer, and the rubric; each retur
 | Sub-agent | Vector collections | Tavily verification |
 | --- | --- | --- |
 | `VENUE` | `regulations` | Official capacity of the named venue; licensing and accessibility obligations at that capacity |
-| `CONTENT` | `rubrics`, `bid_concepts` | Whether named performers and works are active and real |
+| `CONTENT` | `bid_concepts` | Whether named performers and works are active and real |
 | `HOST` | — | Conflicting engagements for the host on the event date |
 | `MUSIC` | `bid_concepts` | Whether named acts are touring or active |
 | `EXPERIENCE` | `portfolios` | Corroboration of claimed past productions; reviews and press reports |
@@ -107,15 +109,33 @@ A safety or licensing shortfall caps the score in the 0–4 band regardless of h
 evaluate_venue(requirement, answer, rubric, tender, search, web, model) -> RequirementVerdict
 ```
 
-The orchestrator passes the requirement, the supplier's answer, the whole rubric, and tender context (`name`, `event_date`, `region`). `search` is `SemanticSearchService`. `web` is a search port. `model` proposes the integer at temperature 0 and reports three findings: `capacity_claim` (`verified`, `disproved`, or `inconclusive`), `meets_tender_capacity`, and `regulation_breached`. The function applies `knowledge_base/rubrics/venue.md`'s first-match rule before it returns the §6 verdict: a disproved capacity claim scores 0; a breached retrieved obligation caps the score at 4; verified capacity below the tender figure, with no breach, scores 3 or 4. When none of those fire, the proposed integer stands. That adjustment is the rubric constraint on this one score. Quality, price, and rank stay in `app/domain/scoring.py`.
+The orchestrator passes the requirement, the supplier's answer, the whole rubric, and tender context (`name`, `event_date`, `region`). `search` is `SemanticSearchService`. `web` is a search port. `model` proposes the integer at temperature 0 and reports three findings: `capacity_claim` (`verified`, `disproved`, or `inconclusive`), `meets_tender_capacity`, and `regulation_breached`. The function applies `knowledge_base/rubrics/venue.md`'s first-match rule before it returns the §6 verdict: a disproved capacity claim scores 0; a breached retrieved obligation pins the proposal to 0–4; verified capacity below the tender figure, with no breach, pins it to 3–4; an inconclusive claim pins it to 5–6; verified capacity that meets the tender, with no breach, pins it to 7–10. Inside a band, the model's integer is kept. A proposal that is not a real `int` in 0–10 is rejected. That adjustment is the rubric constraint on this one score. Quality, price, and rank stay in `app/domain/scoring.py`.
 
 ### `HOST`
 
 The approved host list arrives inside `get_tender_requirements`, so no third tool is needed. A host absent from the list fails the requirement outright — score 0 — since approval is categorical, not a matter of degree. A listed host with a same-date conflict found via Tavily scores in the 3–4 band: approved, but likely unavailable.
 
-### `CONTENT` and `MUSIC`
+### `CONTENT`
 
-Comparative rather than factual. Both retrieve past winning concepts from `bid_concepts` so the rubric is applied against precedent instead of the model's taste. Both verify that named performers exist and are active; a fabricated performer scores 0 per §2 of `04-scoring-model.md`.
+Comparative rather than factual. Past concepts come from `bid_concepts` so the rubric is applied against precedent instead of the model's taste. Named performers and works are checked for being active and real; a fabricated performer, work, or segment scores 0 per §2 of `04-scoring-model.md`.
+
+`evaluate_content` in `agent/subagents/content.py` is that sub-agent:
+
+```python
+evaluate_content(requirement, answer, rubric, tender, search, web, model) -> RequirementVerdict
+```
+
+The caller passes the requirement, the supplier's answer, the whole rubric, and tender context (`name`, `event_date`, `region`). `search` is `SemanticSearchService`. `search_bids` is called with no `tender_id`, so precedent is taken from `bid_concepts` across tenders. `web` is a search port. `model` proposes the integer at temperature 0 and reports three findings: `performer_claim` (`verified`, `disproved`, or `inconclusive`), `both_components_sound`, and `substantive_defect`. The function applies `knowledge_base/rubrics/content.md`'s first-match rule before it returns the §6 verdict. The bands this function pins are:
+
+1. `performer_claim == "disproved"` → score 0.
+2. `both_components_sound` and `performer_claim == "verified"` → the proposal is pinned to 9–10.
+3. `substantive_defect` → the proposal is pinned to 3–4.
+
+`both_components_sound` means the schedule and the concept are both present and relevant to the event. `substantive_defect` means the answer addresses content, but a present component is defective in the way the rubric's 3–4 band describes — a self-contradictory schedule beside a relevant concept, for example. A proposal that is not a real `int` in 0–10 is rejected. Any other finding combination is rejected: the 7–8, 5–6, and 1–2 bands stay in the rubric until a later slice. That adjustment is the rubric constraint on this one score. Quality, price, and rank stay in `app/domain/scoring.py`.
+
+### `MUSIC`
+
+Comparative rather than factual. Past winning concepts come from `bid_concepts` so the rubric is applied against precedent instead of the model's taste. Named acts are checked for being on tour or active; a fabricated act scores 0 per §2 of `04-scoring-model.md`.
 
 ### `EXPERIENCE`
 

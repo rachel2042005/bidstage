@@ -15,7 +15,7 @@ This is the part of the system a reviewer will probe hardest, so every value her
 
 The LLM contributes **only** the per-requirement integers. Every arithmetic step is ordinary code (`NFR-DET-1`), which is both a project rule and the reason the model below is reproducible.
 
-The venue sub-agent pins that integer to the band in `knowledge_base/rubrics/venue.md` when the model's own findings require it (`05-agent-spec.md` §5, `T-AG-13`, `T-AG-16`, `T-AG-17`). Quality, price, and final score stay the formulas in §3–§5.
+The venue sub-agent pins that integer to the band in `knowledge_base/rubrics/venue.md` when the model's own findings require it (`05-agent-spec.md` §5, `T-AG-13`, `T-AG-16`, `T-AG-17`). The content sub-agent pins the same way against `knowledge_base/rubrics/content.md` (`T-AG-21`, `T-AG-22`, `T-AG-23`). Quality, price, and final score stay the formulas in §3–§5.
 
 ---
 
@@ -32,7 +32,7 @@ One rubric per requirement type, stored unchunked in the `rubrics` collection (`
 | 1–2 | Barely addresses the requirement |
 | 0 | Not addressed, or a claim found to be false |
 
-Each rubric adds type-specific anchors — for `VENUE`, whether the official capacity was located and whether it satisfies both the tender figure and the regulatory limit; for `EXPERIENCE`, how many claimed productions were corroborated. A verified-false claim scores 0 regardless of presentation quality, which is what makes Tavily verification consequential rather than decorative.
+Each rubric adds type-specific anchors — for `VENUE`, whether the official capacity was located and whether it satisfies both the tender figure and the regulatory limit; for `CONTENT`, whether the schedule and the concept are both present and on-theme and whether a named performer or work was disproved; for `EXPERIENCE`, how many claimed productions were corroborated. A verified-false claim scores 0 regardless of presentation quality, which is what makes Tavily verification consequential rather than decorative.
 
 Every `RequirementScored` event records `rubric_version`, so a score remains explainable after a rubric changes (`03-domain-events.md` §6).
 
