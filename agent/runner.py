@@ -26,6 +26,8 @@ from agent.orchestrator import (  # noqa: E402
     ContentModel,
     EvidenceSearch,
     ExperienceModel,
+    HostModel,
+    MusicModel,
     PageSearch,
     RequirementsTool,
     RubricIndex,
@@ -67,6 +69,8 @@ def run_once(
     venue_model: VenueModel,
     content_model: ContentModel,
     experience_model: ExperienceModel,
+    host_model: HostModel,
+    music_model: MusicModel,
     submit: ScoreTool,
     complete: Completion,
 ) -> int:
@@ -101,6 +105,8 @@ def run_once(
         venue_model=venue_model,
         content_model=content_model,
         experience_model=experience_model,
+        host_model=host_model,
+        music_model=music_model,
         submit=wrapping_submit,
     )
     payload = requirements(work.tender_id)

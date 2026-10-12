@@ -2,8 +2,9 @@
 
 The doubles speak the same contracts as `run_once`: a requirements payload,
 `get_rubric`, search hits shaped `{text, ...}`, web pages with `content`,
-and the three assessment dataclasses. Scores are still proposed by stand-ins,
-so the run does not call a model or the network.
+and the assessment dataclasses. Scores are still proposed by stand-ins,
+so the run does not call a model or the network. This tender has no HOST
+or MUSIC requirement, so those models are present and are not called.
 """
 
 from agent.runner import AssessmentWork, run_once
@@ -147,6 +148,11 @@ class ExperienceDemo:
         )
 
 
+class _UnusedDemo:
+    def assess(self, material: object) -> None:
+        raise AssertionError("this demo tender has no HOST or MUSIC requirement")
+
+
 submitted_scores: list[tuple[str, int]] = []
 terminal_events: list[object] = []
 
@@ -194,6 +200,8 @@ assessed = run_once(
     venue_model=VenueDemo(),
     content_model=ContentDemo(),
     experience_model=ExperienceDemo(),
+    host_model=_UnusedDemo(),
+    music_model=_UnusedDemo(),
     submit=record_score,
     complete=record_terminal,
 )

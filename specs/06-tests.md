@@ -142,7 +142,7 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 | `T-AG-9` | Transient API failure three times | Bid released unclaimed; no partial assessment persisted |
 | `T-AG-10` | Crash after two of five scores | Next cycle resumes at the third requirement |
 | `T-AG-11` | Two poll cycles overlapping | Bid claimed once; no double processing (`05` §3) |
-| `T-AG-12` | Host absent from the approved list | Score 0 |
+| `T-AG-12` | A real host is named and is absent from the approved list; the model proposes 9 | Score is 1 or 2 (`05` §5) |
 | `T-AG-13` | A retrieved police, fire, licence, or accessibility obligation is breached, and the model proposes 9 | Score is an integer in 0–4 (`05` §5) |
 | `T-AG-14` | Any arithmetic inside an agent module | Absent; quality computed in `app/domain/scoring.py` (project rule 2) |
 | `T-AG-16` | Official capacity is verified and below the tender figure; no retrieved obligation is breached; the model proposes 9 | Score is 3 or 4 |
@@ -159,6 +159,12 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 | `T-AG-27` | `run_once` claims one bid whose three requirements score 9 | `QualityAssessmentCompleted` with quality 90.0; a second claim returns nothing |
 | `T-AG-28` | The `VENUE` threshold scores 4 | `BidDisqualified` with `reason` `threshold` and `failed_requirement_id`; later models are not assessed |
 | `T-AG-29` | Every requirement is scored and quality is 50.0 | `BidDisqualified` with `reason` `quality_floor` and `quality_score` 50.0; no `failed_requirement_id` |
+| `T-AG-30` | Primary and backup are both on the approved list, neither has a same-date conflict, and the model proposes 4 | Score is 9 or 10 (`05` §5) |
+| `T-AG-31` | The primary host is listed and has a same-date conflict, the backup is also listed, and the model proposes 9 | Score is 3 or 4 |
+| `T-AG-32` | A live performance has a complete rider, the central acts are verified, and the model proposes 4 | Score is 9 or 10 (`05` §5) |
+| `T-AG-33` | The tender requires a live performance and the bid has none, and the model proposes 9 | Score is 3 or 4 |
+| `T-AG-34` | A named act is disproved while the live program and rider would otherwise meet the 9–10 rule, and the model proposes 9 | Score is 0 |
+| `T-AG-35` | Orchestrator scores `VENUE`, `CONTENT`, `HOST`, `MUSIC`, and `EXPERIENCE` in that order, and the `VENUE` threshold scores 9 | Five `RequirementScored` commands, in list order; each `rubric_version` is that type's stored rubric |
 
 `tests/test_mcp_server.py` covers `T-AG-2` and `T-AG-3` against an in-memory `GetTenderRequirements` query. A price column on the view is absent from the payload. A `HOST` requirement includes the host list the query supplied. A blank id raises `ValueError` before lookup. An unknown id raises `TenderNotFound`. The same file covers `submit_requirement_score`: the dispatched `ScoreRequirement` is a known literal and the handler's `{"accepted": True, "event_version": 3}` is returned unchanged; scores outside 0–10, bools, and non-integers raise `ValueError` (`T-AG-5`, `T-AG-6`); blank text fields raise `ValueError` before dispatch; `ScoringRejected` propagates. `T-AG-4` waits for the SQL handler.
 
@@ -168,7 +174,11 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 
 `tests/test_experience_evaluator.py` covers `T-AG-24`, `T-AG-25`, and `T-AG-26` at `evaluate_experience`. Portfolio search, web search, and the model are fakes. `search_portfolios` returns the supplier's text only when `supplier_id` matches. The model reports the constraining finding only when it was given the whole rubric plus that text and the web page. `T-AG-24` proposes 4, which sits below the 9–10 band. `T-AG-26` also reports three verified outdoor shows, so a first-match that skips the disproved-production rule would pin the score into 9–10.
 
-`tests/test_orchestrator.py` covers `T-AG-20` and `T-AG-8` at `score_bid`. `get_tender_requirements` and `submit_requirement_score` run against in-memory doubles. Each rubric is loaded through `SemanticSearchService` from an in-memory store. Portfolio search, regulation search, bid search, web search, and the three models are fakes. A model reports a score of 9 only when its requirement, the tender, the whole rubric, and both evidence texts arrived. `T-AG-20` keeps `VENUE` as a threshold that scores 9, so the later two requirements are still dispatched. `T-AG-8` makes that same threshold score 4; the `CONTENT` and `EXPERIENCE` models are not assessed.
+`tests/test_host_evaluator.py` covers `T-AG-12`, `T-AG-30`, and `T-AG-31` at `evaluate_host`. Web search and the model are fakes. Membership is `strip().casefold()` inside the function. The model reports the extracted names only when it was given the whole rubric, the approved list, and the web page. `T-AG-12` proposes 9 for a named host who is not on the list, which sits above the 1–2 band. `T-AG-30` proposes 4, which sits below the 9–10 band, and the extracted names differ from the list by case and surrounding spaces. `T-AG-31` also lists the backup and reports no backup conflict, so a first-match that skips the same-date conflict rule would pin the score into 9–10.
+
+`tests/test_music_evaluator.py` covers `T-AG-32`, `T-AG-33`, and `T-AG-34` at `evaluate_music`. Past concepts, web search, and the model are fakes. `search_bids` returns the precedent text only when `tender_id` is omitted. The model reports the constraining finding only when it was given the whole rubric plus that text and the web page. `T-AG-32` proposes 4, which sits below the 9–10 band. `T-AG-34` reports a live performance and a complete rider and a disproved act, and the score is 0.
+
+`tests/test_orchestrator.py` covers `T-AG-20`, `T-AG-8`, and `T-AG-35` at `score_bid`. `get_tender_requirements` and `submit_requirement_score` run against in-memory doubles. Each rubric is loaded through `SemanticSearchService` from an in-memory store. Portfolio search, regulation search, bid search, web search, and the models are fakes. A model reports a score of 9 only when its requirement, the tender, the whole rubric, and its evidence arrived. `T-AG-20` keeps `VENUE` as a threshold that scores 9, so `CONTENT` and `EXPERIENCE` are still dispatched. `T-AG-8` makes that same threshold score 4; the later models are not assessed. `T-AG-35` walks `VENUE`, `CONTENT`, `HOST`, `MUSIC`, and `EXPERIENCE`, with that same threshold scoring 9, so all five are submitted. The `HOST` and `MUSIC` models passed by `T-AG-20` and `T-AG-8` fail if they are called.
 
 `tests/test_runner.py` covers `T-AG-27`, `T-AG-28`, and `T-AG-29` at `run_once`. The queue, the score handler, and the completion handler are in-memory. `T-AG-27` uses weights 40/30/30 and three scores of 9, so quality is the literal 90.0. `T-AG-29` uses scores 5, 4, and 6, which the pinned bands can produce, and quality is the literal 50.0.
 
@@ -270,6 +280,6 @@ Run before any demo. Each maps to a constraint in `01-requirements.md` §4.
 | Event Sourcing | `NFR-ES-1` … `NFR-ES-5` | `T-ES-1` … `T-ES-6`, `T-INV-1` … `T-INV-10`, `T-E2E-7` |
 | External MCP | `NFR-MCP-1`, `NFR-MCP-2` | `T-CMD-9`, `T-E2E-1` |
 | Own tools | `NFR-TOOL-1` | `T-AG-2` … `T-AG-5` |
-| Deep Agent | `NFR-AGT-1` … `NFR-AGT-4` | `T-AG-1` … `T-AG-20` |
+| Deep Agent | `NFR-AGT-1` … `NFR-AGT-4` | `T-AG-1` … `T-AG-35` |
 | Determinism | `NFR-DET-1` | `T-AG-14`, `T-SC-1` … `T-SC-19` |
 | Environment | `ENV-1` … `ENV-6` | `T-ENV-1` … `T-ENV-8` |

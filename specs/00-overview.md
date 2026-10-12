@@ -252,7 +252,7 @@ Semantic search enables queries such as *"find bids that include a tribute segme
 | `get_tender_requirements(tender_id)` | Returns requirements, weights and threshold flags to the agent. For `HOST` requirements it also returns the approved host list, read from a seeded reference table — this is why no third tool is needed |
 | `submit_requirement_score(bid_id, requirement_id, score, justification, sources, rubric_version)` | Persists a requirement score as an event |
 
-Scope is fixed at **two** own tools. The optional third tool `check_host_list(name)` is **dropped**, which leaves the `HOST` sub-agent without a way to verify the approved list — see §13.
+Scope is fixed at **two** own tools. The optional third tool `check_host_list(name)` is **dropped**. The approved list arrives inside `get_tender_requirements`, and `evaluate_host` checks membership itself (§13).
 
 ---
 

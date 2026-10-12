@@ -59,7 +59,7 @@ from tests.test_orchestrator import (
     _tender_matches,
     _view,
 )
-from tests.test_orchestrator import _ContentModel, _ExperienceModel, _VenueModel
+from tests.test_orchestrator import _ContentModel, _ExperienceModel, _UnusedModel, _VenueModel
 
 
 class _Queue:
@@ -114,6 +114,8 @@ def _run(
         venue_model=venue_model,
         content_model=content_model,
         experience_model=experience_model,
+        host_model=_UnusedModel(),
+        music_model=_UnusedModel(),
         submit=lambda bid_id, requirement_id, score, justification, sources, rubric_version: (
             submit_requirement_score(
                 bid_id,

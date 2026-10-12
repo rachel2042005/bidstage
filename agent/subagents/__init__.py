@@ -1,6 +1,7 @@
 """One sub-agent per requirement type. See specs/05-agent-spec.md §5.
 
-venue.py — evaluate_venue. content.py — evaluate_content. experience.py — evaluate_experience. Planned: host.py, music.py
+venue.py — evaluate_venue. content.py — evaluate_content. host.py — evaluate_host.
+music.py — evaluate_music. experience.py — evaluate_experience.
 
 Each receives the requirement, the supplier's answer and the rubric, and returns
 the structured verdict in §6. None receives a price: their input comes from

@@ -77,7 +77,7 @@ Orchestrator
 
 Step 7 is arithmetic in `app/domain/scoring.py`, not a model call (`NFR-DET-1`).
 
-`score_bid` in `agent/orchestrator.py` is steps 2–5 for `VENUE`, `CONTENT`, and `EXPERIENCE`, and the threshold stop in step 6 (`T-AG-20`, `T-AG-8`). Answers are a map from requirement id to response text. `supplier_id` is an argument, because `evaluate_experience` scopes `search_portfolios` to one supplier and `rm_bid_for_assessment` does not carry it yet. The function calls `get_tender_requirements` and `submit_requirement_score` through the same Python functions the MCP tools wrap. It walks the requirement list in order, loads each rubric whole, and dispatches `evaluate_venue`, `evaluate_content`, or `evaluate_experience`. A type with no sub-agent, including `HOST` and `MUSIC`, raises `ValueError` before any score is submitted. A threshold requirement scoring below 6 is submitted, and later requirements are not dispatched.
+`score_bid` in `agent/orchestrator.py` is steps 2–5 for `VENUE`, `CONTENT`, `HOST`, `MUSIC`, and `EXPERIENCE`, and the threshold stop in step 6 (`T-AG-20`, `T-AG-8`, `T-AG-35`). Answers are a map from requirement id to response text. `supplier_id` is an argument, because `evaluate_experience` scopes `search_portfolios` to one supplier and `rm_bid_for_assessment` does not carry it yet. The function calls `get_tender_requirements` and `submit_requirement_score` through the same Python functions the MCP tools wrap. It walks the requirement list in order, loads each rubric whole, and dispatches `evaluate_venue`, `evaluate_content`, `evaluate_host`, `evaluate_music`, or `evaluate_experience`. `approved_hosts` is read from that payload and passed only to `evaluate_host`. A `HOST` requirement whose payload has no `approved_hosts` raises `ValueError` before any score is submitted. An empty list is a real list. A type outside those five raises `ValueError` before any score is submitted. A threshold requirement scoring below 6 is submitted, and later requirements are not dispatched.
 
 `run_once` in `agent/runner.py` is the poll cycle (`T-AG-27`, `T-AG-28`, `T-AG-29`). It claims one `AssessmentWork` from the queue — `bid_id`, `tender_id`, `supplier_id`, and the answers, with no price — calls `score_bid`, then `CompleteAssessment`. A second claim in the same cycle is not taken; the next `run_once` claims nothing when the queue is empty. When a submitted threshold score is below 6, the command is `BidDisqualified` with `reason` `threshold` and `failed_requirement_id`, and `quality_score` is absent. Otherwise quality is `quality` in `app/domain/scoring.py`. Quality below 60 emits `BidDisqualified` with `reason` `quality_floor` and `quality_score`, and `failed_requirement_id` is absent. Quality of 60 or more emits `QualityAssessmentCompleted` with `quality_score` and `requirement_scores`. Resume-after-crash stays later (`T-AG-10`). The SQL append for `CompleteAssessment` waits with the other handlers.
 
@@ -115,7 +115,22 @@ The orchestrator passes the requirement, the supplier's answer, the whole rubric
 
 ### `HOST`
 
-The approved host list arrives inside `get_tender_requirements`, so no third tool is needed. A host absent from the list fails the requirement outright — score 0 — since approval is categorical, not a matter of degree. A listed host with a same-date conflict found via Tavily scores in the 3–4 band: approved, but likely unavailable.
+The approved host list arrives inside `get_tender_requirements`, so no third tool is needed. Membership is a comparison in `evaluate_host`, not a model opinion: both the extracted name and each list entry are `strip().casefold()`-ed, and equality is exact. A named host absent from the list scores in the 1–2 band. Score 0 is reserved for a requirement where no host was proposed. A listed host with a same-date conflict found via Tavily scores in the 3–4 band: approved, but likely unavailable.
+
+`evaluate_host` in `agent/subagents/host.py` is that sub-agent:
+
+```python
+evaluate_host(requirement, answer, rubric, tender, approved_hosts, web, model) -> RequirementVerdict
+```
+
+The caller passes the requirement, the supplier's answer, the whole rubric, tender context (`name`, `event_date`, `region`), and `approved_hosts`. There is no vector search. `web` is a search port for same-date engagements. `model` proposes the integer at temperature 0 and reports four findings: `host_name`, `backup_name`, `primary_conflict`, and `backup_conflict`. The function applies `knowledge_base/rubrics/host.md`'s first-match rule before it returns the §6 verdict. The bands this function pins are:
+
+1. No host name after `strip` → score 0.
+2. A named host whose normalized name is not in `approved_hosts` → the proposal is pinned to 1–2.
+3. The primary host is listed and `primary_conflict` → the proposal is pinned to 3–4.
+4. The primary host is listed, the backup's normalized name is listed, and `backup_conflict` is false → the proposal is pinned to 9–10.
+
+Rule 4 does not repeat "no conflict". Rule 3 is first, so a listed backup does not lift a conflicted primary into 9–10. A proposal that is not a real `int` in 0–10 is rejected. Any other finding combination is rejected: the 5–6 and 7–8 bands stay in the rubric until a later slice. That adjustment is the rubric constraint on this one score. Quality, price, and rank stay in `app/domain/scoring.py`.
 
 ### `CONTENT`
 
@@ -138,6 +153,20 @@ The caller passes the requirement, the supplier's answer, the whole rubric, and 
 ### `MUSIC`
 
 Comparative rather than factual. Past winning concepts come from `bid_concepts` so the rubric is applied against precedent instead of the model's taste. Named acts are checked for being on tour or active; a fabricated act scores 0 per §2 of `04-scoring-model.md`.
+
+`evaluate_music` in `agent/subagents/music.py` is that sub-agent:
+
+```python
+evaluate_music(requirement, answer, rubric, tender, search, web, model) -> RequirementVerdict
+```
+
+The caller passes the requirement, the supplier's answer, the whole rubric, and tender context (`name`, `event_date`, `region`). `search` is `SemanticSearchService`. `search_bids` is called with no `tender_id`, so precedent is taken from `bid_concepts` across tenders. `web` is a search port. `model` proposes the integer at temperature 0 and reports four findings: `act_claim` (`verified`, `disproved`, or `inconclusive`), `live_offered`, `tender_requires_live`, and `rider_complete`. `rider_complete` means the technical rider covers stage, amplification, and power. The function applies `knowledge_base/rubrics/music.md`'s first-match rule before it returns the §6 verdict. The bands this function pins are:
+
+1. `act_claim == "disproved"` → score 0.
+2. `tender_requires_live` and not `live_offered` → the proposal is pinned to 3–4.
+3. `act_claim == "verified"` and `rider_complete` and (`live_offered` or not `tender_requires_live`) → the proposal is pinned to 9–10.
+
+Rule 3 requires a verified act, so a disproved act does not match it. Rule 1 is still first. A proposal that is not a real `int` in 0–10 is rejected. Any other finding combination is rejected: the 7–8, 5–6, and 1–2 bands stay in the rubric until a later slice. That adjustment is the rubric constraint on this one score. Quality, price, and rank stay in `app/domain/scoring.py`.
 
 ### `EXPERIENCE`
 

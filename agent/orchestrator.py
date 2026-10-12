@@ -3,10 +3,11 @@
 `score_bid` loads the tender through `get_tender_requirements`, loads each
 rubric whole, calls the matching evaluator, and submits the verdict through
 `submit_requirement_score`. Answers are a map from requirement id to response
-text. `supplier_id` scopes the experience portfolio search. `HOST`, `MUSIC`,
-and any other type with no sub-agent raise `ValueError` before any score is
-submitted. A threshold requirement scoring below 6 is submitted, and later
-requirements are not dispatched (`T-AG-8`).
+text. `supplier_id` scopes the experience portfolio search. `approved_hosts`
+is passed only to `evaluate_host`. A type outside the closed five raises
+`ValueError` before any score is submitted. A `HOST` requirement with no
+`approved_hosts` on the payload does too. A threshold requirement scoring
+below 6 is submitted, and later requirements are not dispatched (`T-AG-8`).
 
 Claiming, quality, and the terminal event stay in the runner.
 """
@@ -21,6 +22,20 @@ from agent.subagents.content import (
     Rubric as ContentRubric,
     TenderContext as ContentTender,
     evaluate_content,
+)
+from agent.subagents.host import (
+    HostModel,
+    HostRequirement,
+    Rubric as HostRubric,
+    TenderContext as HostTender,
+    evaluate_host,
+)
+from agent.subagents.music import (
+    MusicModel,
+    MusicRequirement,
+    Rubric as MusicRubric,
+    TenderContext as MusicTender,
+    evaluate_music,
 )
 from agent.subagents.experience import (
     ExperienceModel,
@@ -37,7 +52,7 @@ from agent.subagents.venue import (
     evaluate_venue,
 )
 
-_IMPLEMENTED = frozenset({"VENUE", "CONTENT", "EXPERIENCE"})
+_IMPLEMENTED = frozenset({"VENUE", "CONTENT", "HOST", "MUSIC", "EXPERIENCE"})
 
 
 class RequirementsTool(Protocol):
@@ -99,12 +114,15 @@ def score_bid(
     venue_model: VenueModel,
     content_model: ContentModel,
     experience_model: ExperienceModel,
+    host_model: HostModel,
+    music_model: MusicModel,
     submit: ScoreTool,
 ) -> None:
-    """Score VENUE, CONTENT, and EXPERIENCE in list order (`T-AG-20`, `T-AG-8`)."""
+    """Score the five requirement types in list order (`T-AG-20`, `T-AG-35`, `T-AG-8`)."""
     payload = requirements(tender_id)
     items = payload["requirements"]
     _require_implemented(items)
+    hosts = _approved_hosts(items, payload)
     tender = _tender_fields(payload["tender"])
     for item in items:
         kind = item["type"]
@@ -119,11 +137,14 @@ def score_bid(
             version,
             tender,
             supplier_id,
+            hosts,
             search,
             web,
             venue_model,
             content_model,
             experience_model,
+            host_model,
+            music_model,
         )
         submit(
             bid_id,
@@ -148,6 +169,18 @@ def _require_implemented(items: list[dict]) -> None:
         )
 
 
+def _approved_hosts(items: list[dict], payload: dict) -> tuple[str, ...]:
+    """The seeded list, required whenever a HOST requirement is present."""
+    if not any(item.get("type") == "HOST" for item in items):
+        return ()
+    if "approved_hosts" not in payload:
+        raise ValueError("approved_hosts is required when a HOST requirement exists.")
+    hosts = payload["approved_hosts"]
+    if not isinstance(hosts, list) or any(type(host) is not str for host in hosts):
+        raise ValueError("approved_hosts must be a list of strings.")
+    return tuple(hosts)
+
+
 def _tender_fields(tender: dict) -> tuple[str, str, str]:
     return tender["name"], str(tender["event_date"]), tender["region"]
 
@@ -159,11 +192,14 @@ def _evaluate(
     version: str,
     tender: tuple[str, str, str],
     supplier_id: str,
+    approved_hosts: tuple[str, ...],
     search: EvidenceSearch,
     web: PageSearch,
     venue_model: VenueModel,
     content_model: ContentModel,
     experience_model: ExperienceModel,
+    host_model: HostModel,
+    music_model: MusicModel,
 ) -> Any:
     name, event_date, region = tender
     kind = item["type"]
@@ -188,6 +224,26 @@ def _evaluate(
             search,
             web,
             content_model,
+        )
+    if kind == "HOST":
+        return evaluate_host(
+            HostRequirement(id=requirement_id, description=description),
+            answer,
+            HostRubric(text=rubric_text, version=version),
+            HostTender(name=name, event_date=event_date, region=region),
+            approved_hosts,
+            web,
+            host_model,
+        )
+    if kind == "MUSIC":
+        return evaluate_music(
+            MusicRequirement(id=requirement_id, description=description),
+            answer,
+            MusicRubric(text=rubric_text, version=version),
+            MusicTender(name=name, event_date=event_date, region=region),
+            search,
+            web,
+            music_model,
         )
     if kind == "EXPERIENCE":
         return evaluate_experience(
