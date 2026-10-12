@@ -139,7 +139,21 @@ Comparative rather than factual. Past winning concepts come from `bid_concepts` 
 
 ### `EXPERIENCE`
 
-Verifies each claimed production. The rubric keys off how many claims were corroborated, so an unverifiable claim and a disproved claim land differently — inconclusive reduces the score, disproved sets 0.
+Verifies each claimed production against the supplier's own portfolio and against reviews or reports. The rubric keys off how many outdoor or stadium productions were corroborated. One disproved production scores 0 even when others were verified (`knowledge_base/rubrics/experience.md`).
+
+`evaluate_experience` in `agent/subagents/experience.py` is that sub-agent:
+
+```python
+evaluate_experience(requirement, answer, rubric, tender, supplier_id, search, web, model) -> RequirementVerdict
+```
+
+The caller passes the requirement, the supplier's answer, the whole rubric, tender context (`name`, `event_date`, `region`), and `supplier_id`. `search` is the portfolio port. `search_portfolios(query, supplier_id)` returns only that supplier's past work; `SemanticSearchService` does not implement the method yet (`02` §6). `web` is a search port. `model` proposes the integer at temperature 0 and reports three findings: `any_disproved`, `verified_outdoor_count`, and `outdoor_claimed`. The function applies the rubric's first-match rule before it returns the §6 verdict. The bands this function pins are:
+
+1. `any_disproved` → score 0.
+2. `verified_outdoor_count >= 3` → the proposal is pinned to 9–10.
+3. `outdoor_claimed` and `verified_outdoor_count == 0` → the proposal is pinned to 5–6.
+
+`verified_outdoor_count` is how many claimed outdoor or stadium productions were independently verified. `outdoor_claimed` means the answer claims at least one. Rule 1 is first, so three verified outdoor shows plus one disproved production still score 0. A proposal that is not a real `int` in 0–10 is rejected, as is a `verified_outdoor_count` that is not a real `int`. Any other finding combination is rejected: the 7–8, 3–4, and 1–2 bands stay in the rubric until a later slice. That adjustment is the rubric constraint on this one score. Quality, price, and rank stay in `app/domain/scoring.py`.
 
 ---
 

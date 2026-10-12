@@ -150,12 +150,17 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 | `T-AG-21` | Schedule and concept are both present and on-theme, the central names are independently verified, and the model proposes 4 | Score is 9 or 10 (`05` §5) |
 | `T-AG-22` | The schedule contradicts itself beside a relevant concept, and the model proposes 9 | Score is 3 or 4 |
 | `T-AG-23` | A named performer or work is disproved, and the model proposes 9 | Score is 0 |
+| `T-AG-24` | Three or more outdoor or stadium productions are verified, none are disproved, and the model proposes 4 | Score is 9 or 10 (`05` §5) |
+| `T-AG-25` | Outdoor or stadium events are claimed, none are verified and none are disproved, and the model proposes 9 | Score is 5 or 6 |
+| `T-AG-26` | One production is disproved while three outdoor shows are verified, and the model proposes 9 | Score is 0 |
 
 `tests/test_mcp_server.py` covers `T-AG-2` and `T-AG-3` against an in-memory `GetTenderRequirements` query. A price column on the view is absent from the payload. A `HOST` requirement includes the host list the query supplied. A blank id raises `ValueError` before lookup. An unknown id raises `TenderNotFound`. The same file covers `submit_requirement_score`: the dispatched `ScoreRequirement` is a known literal and the handler's `{"accepted": True, "event_version": 3}` is returned unchanged; scores outside 0–10, bools, and non-integers raise `ValueError` (`T-AG-5`, `T-AG-6`); blank text fields raise `ValueError` before dispatch; `ScoringRejected` propagates. `T-AG-4` waits for the SQL handler.
 
 `tests/test_venue_evaluator.py` covers `T-AG-13`, `T-AG-16`, `T-AG-17`, `T-AG-18`, and `T-AG-19` at `evaluate_venue`. Regulations, web search, and the model are fakes. The model reports the constraining finding only when it was given the whole rubric plus the regulation text and the web page. `T-AG-19` proposes 4, which sits below the 7–10 band.
 
 `tests/test_content_evaluator.py` covers `T-AG-21`, `T-AG-22`, and `T-AG-23` at `evaluate_content`. Past concepts, web search, and the model are fakes. `search_bids` returns the precedent text only when `tender_id` is omitted. The model reports the constraining finding only when it was given the whole rubric plus that text and the web page. `T-AG-21` proposes 4, which sits below the 9–10 band. `T-AG-23` reports the schedule and concept as sound and the named performer as disproved, and the score is 0.
+
+`tests/test_experience_evaluator.py` covers `T-AG-24`, `T-AG-25`, and `T-AG-26` at `evaluate_experience`. Portfolio search, web search, and the model are fakes. `search_portfolios` returns the supplier's text only when `supplier_id` matches. The model reports the constraining finding only when it was given the whole rubric plus that text and the web page. `T-AG-24` proposes 4, which sits below the 9–10 band. `T-AG-26` also reports three verified outdoor shows, so a first-match that skips the disproved-production rule would pin the score into 9–10.
 
 `tests/test_venue_orchestrator.py` covers `T-AG-20` at `score_venue_requirement`. `get_tender_requirements` and `submit_requirement_score` run against in-memory doubles. The rubric is loaded through `SemanticSearchService` from an in-memory store. Web search and the model are fakes. The model reports a compliant venue only when the requirement, the tender, the whole rubric, and both evidence texts arrived; otherwise it reports a breach and the score would be 4.
 

@@ -270,7 +270,9 @@ class SemanticSearchService:
 
 `search_regulations` queries `regulations`.
 
-Both return hits `{id, text, metadata, score}` in the store's order (closest first). `score` is cosine similarity, `1 - distance`, where `distance` is the cosine distance the collections are created with. Higher is closer.
+`search_portfolios(query, supplier_id, top_k=5)` is the portfolio port `evaluate_experience` calls (`05` §5, `T-AG-24`). It will query `portfolios` with the filter `{"supplier_id": supplier_id}` applied before neighbours are chosen, and return the same hit shape. `SemanticSearchService` does not implement it yet.
+
+`search_bids` and `search_regulations` return hits `{id, text, metadata, score}` in the store's order (closest first). `score` is cosine similarity, `1 - distance`, where `distance` is the cosine distance the collections are created with. Higher is closer.
 
 `get_rubric` uppercases the requirement type and loads `rubric:{TYPE}` through `get`, one whole document (`NFR-VEC-3`, `T-VEC-3`). The type taxonomy is the closed set `VENUE`, `CONTENT`, `HOST`, `MUSIC`, `EXPERIENCE`; any other value raises `ValueError`. A known type with nothing stored returns `None`. The result is `{id, text, metadata}` — a key lookup has no score.
 
