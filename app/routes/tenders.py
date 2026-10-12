@@ -37,6 +37,7 @@ from app.domain.tender import (
     parse_weight,
 )
 from app.domain.user import ORGANIZER, SUPPLIER
+from app.queries.get_bid import active_bid, bid_count
 from app.queries.get_tender import get_tender_details
 from app.routes.access import current_user_id, require_role
 from app.routes.formatting import ISRAEL
@@ -77,7 +78,7 @@ def create_tender():
     organizer_id = current_user_id() or ""
     try:
         command = _command_from_form(request.form, organizer_id)
-        with unit_of_work() as (store, _users, tenders):
+        with unit_of_work() as (store, _users, tenders, _bids):
             tender_id = publish_tender(store, tenders, command)
     except DomainError as exc:
         _flash_domain_error(exc)
@@ -97,10 +98,13 @@ def create_tender():
 @require_role(ORGANIZER)
 def organizer_tender(tender_id: str):
     details = _details_for_owner(tender_id)
+    with unit_of_work() as (_store, _users, _tenders, bids):
+        count = bid_count(bids, tender_id)
     return render_template(
         "tenders/detail.html",
         details=details,
         can_edit=details.tender.status == DRAFT,
+        bid_count=count,
         back_url=url_for("pages.organizer_home"),
         back_label="חזרה למכרזים שלי",
     )
@@ -119,7 +123,7 @@ def add_tender_requirement(tender_id: str):
             is_threshold=request.form.get("is_threshold") == "1",
             description=request.form.get("description", ""),
         )
-        with unit_of_work() as (store, _users, tenders):
+        with unit_of_work() as (store, _users, tenders, _bids):
             add_requirement(store, tenders, command)
     except NotTenderOwnerError:
         abort(403)
@@ -137,7 +141,7 @@ def add_tender_requirement(tender_id: str):
 def publish_existing(tender_id: str):
     organizer_id = current_user_id() or ""
     try:
-        with unit_of_work() as (store, _users, tenders):
+        with unit_of_work() as (store, _users, tenders, _bids):
             publish_tender(
                 store,
                 tenders,
@@ -157,8 +161,10 @@ def publish_existing(tender_id: str):
 @bp.get("/supplier/tenders/<tender_id>")
 @require_role(SUPPLIER)
 def supplier_tender(tender_id: str):
-    with unit_of_work() as (_store, _users, tenders):
+    supplier_id = current_user_id() or ""
+    with unit_of_work() as (_store, _users, tenders, bids):
         details = get_tender_details(tenders, tender_id)
+        own = active_bid(bids, tender_id, supplier_id) if details is not None else None
     if details is None:
         abort(404)
     if details.tender.status != OPEN:
@@ -167,13 +173,15 @@ def supplier_tender(tender_id: str):
         "tenders/detail.html",
         details=details,
         can_edit=False,
+        can_bid=own is None,
+        own_bid=own is not None,
         back_url=url_for("pages.supplier_home"),
         back_label="חזרה למכרזים הפתוחים",
     )
 
 
 def _details_for_owner(tender_id: str):
-    with unit_of_work() as (_store, _users, tenders):
+    with unit_of_work() as (_store, _users, tenders, _bids):
         details = get_tender_details(tenders, tender_id)
     if details is None:
         abort(404)

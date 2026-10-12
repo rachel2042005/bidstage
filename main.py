@@ -13,6 +13,7 @@ from flask import Flask, render_template, session  # noqa: E402
 
 from app.config import ConfigError, load_settings  # noqa: E402
 from app.routes.auth import bp as auth_bp  # noqa: E402
+from app.routes.bids import bp as bids_bp  # noqa: E402
 from app.routes.formatting import (  # noqa: E402
     format_alpha,
     format_event_day,
@@ -29,7 +30,7 @@ from app.routes.tenders import (  # noqa: E402
 )
 
 
-def create_app(*, event_store=None, users=None, tenders=None) -> Flask:
+def create_app(*, event_store=None, users=None, tenders=None, bids=None, bid_notifier=None) -> Flask:
     try:
         settings = load_settings()
         secret = settings.flask_secret_key or "dev-only-not-for-demo"
@@ -45,9 +46,14 @@ def create_app(*, event_store=None, users=None, tenders=None) -> Flask:
             from app.projections.tenders import InMemoryTendersProjection
 
             tenders = InMemoryTendersProjection()
-        app.extensions["backend"] = (event_store, users, tenders)
+        if bids is None:
+            from app.projections.bids import InMemoryBidsProjection
+
+            bids = InMemoryBidsProjection()
+        app.extensions["backend"] = (event_store, users, tenders, bids)
     elif not db_ready:
         from app.events.memory import InMemoryEventStore
+        from app.projections.bids import InMemoryBidsProjection
         from app.projections.tenders import InMemoryTendersProjection
         from app.projections.users import InMemoryUsersProjection
 
@@ -55,11 +61,15 @@ def create_app(*, event_store=None, users=None, tenders=None) -> Flask:
             InMemoryEventStore(),
             InMemoryUsersProjection(),
             InMemoryTendersProjection(),
+            InMemoryBidsProjection(),
         )
+    if bid_notifier is not None:
+        app.extensions["bid_notifier"] = bid_notifier
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(pages_bp)
     app.register_blueprint(tenders_bp)
+    app.register_blueprint(bids_bp)
 
     app.add_template_filter(format_shekels, "shekels")
     app.add_template_filter(format_event_day, "event_day")

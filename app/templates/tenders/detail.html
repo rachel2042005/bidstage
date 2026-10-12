@@ -18,6 +18,10 @@
   <dd class="col-sm-9"><span class="ltr-numeric">₪{{ details.tender.budget_amount|shekels }}</span></dd>
   <dt class="col-sm-3">משקל איכות α</dt>
   <dd class="col-sm-9"><span class="ltr-numeric">{{ details.tender.alpha|alpha_pct }}</span> איכות, <span class="ltr-numeric">{{ details.tender.alpha|price_pct }}</span> מחיר</dd>
+  {% if bid_count is defined %}
+  <dt class="col-sm-3">הצעות שהתקבלו</dt>
+  <dd class="col-sm-9"><span class="ltr-numeric" id="bid-count">{{ bid_count }}</span></dd>
+  {% endif %}
 </dl>
 
 <h2 class="h5">קריטריוני הערכה</h2>
@@ -51,6 +55,32 @@
 <p>סכום משקלות: <span class="ltr-numeric">{{ details.weight_total }}%</span></p>
 {% else %}
 <p>עדיין אין דרישות.</p>
+{% endif %}
+
+{% if can_bid %}
+<hr>
+<h2 class="h5">הגשת הצעה</h2>
+<p class="text-muted">המחיר נשמר במעטפה חתומה ואינו מוצג למארגן.</p>
+<form method="post" action="{{ url_for('bids.submit', tender_id=details.tender.tender_id) }}" class="card card-body shadow-sm mb-3">
+  <div class="mb-3">
+    <label class="form-label" for="concept">קונספט</label>
+    <textarea class="form-control" id="concept" name="concept" rows="4" required></textarea>
+  </div>
+  {% for requirement in details.requirements %}
+  <div class="mb-3">
+    <label class="form-label" for="answer_{{ requirement.requirement_id }}">מענה: {{ requirement_type_labels[requirement.requirement_type] }}</label>
+    <p class="small text-muted mb-1">{{ requirement.description }}</p>
+    <textarea class="form-control" id="answer_{{ requirement.requirement_id }}" name="answer_{{ requirement.requirement_id }}" rows="3" required></textarea>
+  </div>
+  {% endfor %}
+  <div class="mb-3">
+    <label class="form-label" for="price">מחיר מוצע (₪)</label>
+    <input class="form-control ltr-numeric" id="price" name="price" inputmode="decimal" required>
+  </div>
+  <button type="submit" class="btn btn-primary">שליחת הצעה</button>
+</form>
+{% elif own_bid %}
+<p>ההצעה הוגשה למכרז זה.</p>
 {% endif %}
 
 {% if can_edit %}

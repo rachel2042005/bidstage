@@ -15,6 +15,7 @@ from flask import current_app
 from app.events.db import transaction
 from app.events.event_store import EventStore
 from app.events.schema import create_schema
+from app.projections.bids import SqlBidsProjection, create_bids_projection
 from app.projections.tenders import SqlTendersProjection, create_tenders_projection
 from app.projections.users import SqlUsersProjection, create_users_projection
 
@@ -29,7 +30,13 @@ def unit_of_work() -> Iterator[tuple]:
         create_schema(conn)
         create_users_projection(conn)
         create_tenders_projection(conn)
-        yield EventStore(conn), SqlUsersProjection(conn), SqlTendersProjection(conn)
+        create_bids_projection(conn)
+        yield (
+            EventStore(conn),
+            SqlUsersProjection(conn),
+            SqlTendersProjection(conn),
+            SqlBidsProjection(conn),
+        )
 
 
 auth_unit_of_work = unit_of_work
