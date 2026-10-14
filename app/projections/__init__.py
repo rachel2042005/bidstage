@@ -11,4 +11,6 @@ by `SqlCompleteAssessmentHandler` and `SqlRevealPricesHandler`.
 
 rm_bid_for_assessment serves the agent rather than a query, and deliberately
 has no price column — that absence is what enforces NFR-AGT-4.
+`enqueue_bid_for_assessment` and `SqlAssessmentQueue` live in
+`bid_for_assessment.py`. Completion marks the row `completed`.
 """

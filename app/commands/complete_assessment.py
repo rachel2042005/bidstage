@@ -2,8 +2,9 @@
 
 Not an MCP tool. `SqlCompleteAssessmentHandler` appends
 `QualityAssessmentCompleted` or `BidDisqualified` on the bid stream and
-projects the assessment read models in that same transaction. It never reads
-a price.
+projects the assessment read models in that same transaction, and sets
+`rm_bid_for_assessment.status` to `completed` when that row exists. It never
+reads a price.
 """
 
 from __future__ import annotations
@@ -73,6 +74,12 @@ INSERT INTO dbo.rm_requirement_score (bid_id, requirement_id, score, weight)
 VALUES (?, ?, ?, ?)
 """
 
+_COMPLETE_QUEUE = """
+UPDATE dbo.rm_bid_for_assessment
+SET status = 'completed'
+WHERE bid_id = ?
+"""
+
 
 class SqlCompleteAssessmentHandler:
     """Append one terminal event and project it. No price column is read."""
@@ -106,22 +113,23 @@ class SqlCompleteAssessmentHandler:
             )
             for item in command.requirement_scores:
                 _insert_requirement_score(self._conn, command.bid_id, item)
-            return
-        store.append(
-            command.bid_id,
-            store.last_version(command.bid_id),
-            BID_DISQUALIFIED,
-            _disqualified_payload(command),
-        )
-        _insert_assessment(
-            self._conn,
-            command.bid_id,
-            tender_id,
-            "disqualified",
-            command.quality_score,
-            command.reason,
-            command.failed_requirement_id,
-        )
+        else:
+            store.append(
+                command.bid_id,
+                store.last_version(command.bid_id),
+                BID_DISQUALIFIED,
+                _disqualified_payload(command),
+            )
+            _insert_assessment(
+                self._conn,
+                command.bid_id,
+                tender_id,
+                "disqualified",
+                command.quality_score,
+                command.reason,
+                command.failed_requirement_id,
+            )
+        _complete_queue(self._conn, command.bid_id)
 
 
 _TERMINAL = frozenset({QUALITY_ASSESSMENT_COMPLETED, BID_DISQUALIFIED})
@@ -192,4 +200,11 @@ def _insert_requirement_score(
         item.score,
         item.weight,
     )
+    cursor.close()
+
+
+def _complete_queue(conn: pyodbc.Connection, bid_id: str) -> None:
+    """Mark the queue row completed. Zero rows updated is success."""
+    cursor = conn.cursor()
+    cursor.execute(_COMPLETE_QUEUE, bid_id)
     cursor.close()

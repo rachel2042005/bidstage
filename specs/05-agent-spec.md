@@ -25,13 +25,13 @@ The agent has three channels, and the split is what makes price isolation struct
 
 | Channel | Direction | Carries |
 | --- | --- | --- |
-| `rm_bid_for_assessment` read model, via `pyodbc` | read | Work queue and bid content |
+| `rm_bid_for_assessment` read model, via `pyodbc` | read and claim | Work queue and bid content |
 | `get_tender_requirements` MCP tool | read | Requirements, weights, threshold flags, approved host list |
 | `submit_requirement_score` MCP tool | write | One `RequirementScored` event per call |
 
-`rm_bid_for_assessment` is a purpose-built projection containing `bid_id`, `tender_id`, `concept`, and the per-requirement responses. **It has no price column.** Price lives only in the `PriceOfferSealed` payload on the bid stream, which the agent never replays. So `NFR-AGT-4` holds because the data is absent from the agent's only source, not because the code declines to look — there is nothing to look at.
+`rm_bid_for_assessment` is a purpose-built projection containing `bid_id`, `tender_id`, `supplier_id`, `concept`, and the per-requirement responses. **It has no price column.** `enqueue_bid_for_assessment` writes those `BidSubmitted` fields only. Price lives only in the `PriceOfferSealed` payload on the bid stream, which the agent never replays. So `NFR-AGT-4` holds because the data is absent from the agent's only source, not because the code declines to look — there is nothing to look at.
 
-Writes go exclusively through `submit_requirement_score`. The agent never issues SQL writes and never appends to `Events` directly, which keeps project rule 1 intact.
+Requirement scores go through `submit_requirement_score`. `claim` updates the queue row in its own committed transaction. `QualityAssessmentCompleted` and `BidDisqualified` go through `CompleteAssessment`, which also sets that row to `completed`. The agent does not append to `Events` on its own.
 
 ---
 
@@ -44,7 +44,9 @@ Writes go exclusively through `submit_requirement_score`. The agent never issues
 
 "Evaluate Now" deliberately does not call the agent over HTTP. The web process stays unaware of the agent's existence, and the demo never waits on a timer.
 
-A bid is claimed before work begins so two poll cycles cannot double-process it. Combined with idempotency in §6, a crash mid-assessment is safe: the next cycle resumes at the first unscored requirement.
+A bid is claimed, and that claim is committed, before work begins, so two poll cycles cannot take the same bid (`T-AG-11`). A crash after the claim leaves the row `claimed`. Releasing it, and resuming at the first unscored requirement, stay with `T-AG-9` and `T-AG-10`.
+
+`run_forever` in `agent/worker.py` is that poll (`T-AG-36`, `T-AG-37`, `T-AG-38`). It calls `run_once`. A return of 1 claims the next bid immediately. A return of 0 sleeps `AGENT_POLL_SECONDS` and polls again. SIGINT and SIGTERM, once `main` starts the loop, only set a flag that is checked before the next claim. The `run_once` already in progress finishes, including its terminal command. `python -m agent.runner` stays the entry point. `main` still prints that the queue is not connected: it does not construct `SqlAssessmentQueue` or the models.
 
 ---
 
