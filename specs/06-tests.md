@@ -40,17 +40,17 @@ Reproduces `04-scoring-model.md` exactly. These are table-driven.
 | `T-SC-11` | Threshold requirement scoring 6 | passes |
 | `T-SC-12` | Quality 59.9 with all thresholds passed | disqualified by floor |
 | `T-SC-13` | Quality exactly 60.0 | qualified |
-| `T-SC-14` | α = 1 | final equals quality |
-| `T-SC-15` | α = 0 | final equals price score, floor still enforced |
-| `T-SC-16` | Tie on final score | higher quality ranks first |
-| `T-SC-17` | Tie on final and quality | earlier submission ranks first |
+| `T-SC-14` | α = 1 on the worked example | A ranks above B; finals are 82.0 and 74.0; price scores still display as 77.8 and 100.0 |
+| `T-SC-15` | α = 0, with a disqualified ₪500,000 bid in the input | B ranks above A; finals are 100.0 and 77.8; the disqualified bid is absent |
+| `T-SC-16` | Finals both 84.4 (quality 82 at ₪1,000,000 and quality 74 at ₪880,000), α = 0.6 | higher quality ranks first, even though it was later and second in the input |
+| `T-SC-17` | Equal final and equal quality | earlier UTC `submitted_at` ranks first, even though it was second in the input |
 | `T-SC-18` | Weights summing to 99 or 101 | publication rejected (`FR-ENT-3`) |
 | `T-SC-19` | No rounding before final multiplication | full-precision path differs from a pre-rounded one and the former is used |
 | `T-SC-20` | `price_score` given 0, −1, or a bool | `ValueError`; a price must be an integer greater than 0 |
 
 `T-SC-9` is the most valuable test in the file: it is the only one that fails if someone "simplifies" the price pool back to all bids.
 
-`tests/test_scoring.py` covers `T-SC-1` and `T-SC-2` at `quality`. The expected values are the literals 82.0 and 74.0. The same file covers `price_score`, `final_score`, and `rank_bids`: `T-SC-4` and `T-SC-3` for the price scores 100.0 and 77.8, `T-SC-6` and `T-SC-5` for the finals 84.4 and 80.3, `T-SC-19` so A's final is not `0.6 × 82 + 0.4 × 77.8`, `T-SC-7` for B ranking above A, `T-SC-8` and `T-SC-9` for the qualified-only pool, and `T-SC-20` for a non-positive price. Displayed figures use `round(value, 1)`. The computed values stay at full precision.
+`tests/test_scoring.py` covers `T-SC-1` and `T-SC-2` at `quality`. The expected values are the literals 82.0 and 74.0. The same file covers `price_score`, `final_score`, and `rank_bids`: `T-SC-4` and `T-SC-3` for the price scores 100.0 and 77.8, `T-SC-6` and `T-SC-5` for the finals 84.4 and 80.3, `T-SC-19` so A's final is not `0.6 × 82 + 0.4 × 77.8`, `T-SC-7` for B ranking above A, `T-SC-8` and `T-SC-9` for the qualified-only pool, `T-SC-14` and `T-SC-15` for α = 1 and α = 0, `T-SC-16` and `T-SC-17` for the quality and submission tie-breaks, and `T-SC-20` for a non-positive price. Displayed figures use `round(value, 1)`. The computed values stay at full precision.
 
 ---
 

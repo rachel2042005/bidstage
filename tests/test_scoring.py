@@ -14,6 +14,10 @@ T-SC-7 — supplier B ranks above supplier A.
 T-SC-8 — a disqualified ₪500,000 bid leaves A and B unchanged.
 T-SC-9 — including that ₪500,000 price displays A as 71.4 and B as 73.0.
 T-SC-20 — a price that is not an integer greater than 0 raises ValueError.
+T-SC-14 — α = 1 ranks A above B; finals are 82.0 and 74.0; price scores stay 77.8 and 100.0.
+T-SC-15 — α = 0 ranks B above A; finals are 100.0 and 77.8; disqualified C is absent.
+T-SC-16 — finals both 84.4; the higher quality ranks first.
+T-SC-17 — equal final and quality; the earlier UTC submission ranks first.
 """
 
 from datetime import datetime, timezone
@@ -125,3 +129,64 @@ def test_non_positive_price_is_rejected(bid_price: int, lowest_qualified_price: 
     """T-SC-20. 0, a negative, and a bool are not a strictly positive integer price."""
     with pytest.raises(ValueError):
         price_score(bid_price, lowest_qualified_price)
+
+
+def test_alpha_one_ranks_quality_and_still_scores_price() -> None:
+    """T-SC-14. α = 1. A’s final is 82.0 and B’s is 74.0. Price scores stay on the bids."""
+    standings = (
+        Standing("bid-b", 74.0, 700_000, True, _SUBMITTED),
+        Standing("bid-a", 82.0, 900_000, True, _SUBMITTED),
+    )
+    ranked = rank_bids(standings, 1.0)
+    by_id = {item.bid_id: item for item in ranked}
+    assert [item.bid_id for item in ranked] == ["bid-a", "bid-b"]
+    assert by_id["bid-a"].final_score == 82.0
+    assert by_id["bid-b"].final_score == 74.0
+    assert round(by_id["bid-a"].price_score, 1) == 77.8
+    assert by_id["bid-b"].price_score == 100.0
+
+
+def test_alpha_zero_ranks_price_and_excludes_the_disqualified_bid() -> None:
+    """T-SC-15. α = 0. C at ₪500,000 is unqualified, so A’s final stays 77.8."""
+    standings = (
+        Standing("bid-a", 82.0, 900_000, True, _SUBMITTED),
+        Standing("bid-b", 74.0, 700_000, True, _SUBMITTED),
+        Standing("bid-c", 50.0, 500_000, False, _SUBMITTED),
+    )
+    ranked = rank_bids(standings, 0.0)
+    by_id = {item.bid_id: item for item in ranked}
+    assert [item.bid_id for item in ranked] == ["bid-b", "bid-a"]
+    assert by_id["bid-b"].final_score == 100.0
+    assert round(by_id["bid-a"].final_score, 1) == 77.8
+    assert "bid-c" not in by_id
+
+
+_EARLIER = datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc)
+_LATER = datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc)
+
+
+def test_equal_finals_rank_higher_quality_first() -> None:
+    """T-SC-16. Both finals are 84.4. B is earlier and first in the input."""
+    standings = (
+        Standing("bid-b", 74.0, 880_000, True, _EARLIER),
+        Standing("bid-a", 82.0, 1_000_000, True, _LATER),
+    )
+    ranked = rank_bids(standings, 0.6)
+    assert [item.bid_id for item in ranked] == ["bid-a", "bid-b"]
+    assert round(ranked[0].final_score, 1) == 84.4
+    assert round(ranked[1].final_score, 1) == 84.4
+    assert ranked[0].quality == 82.0
+    assert ranked[1].quality == 74.0
+
+
+def test_equal_final_and_quality_rank_earlier_submission_first() -> None:
+    """T-SC-17. Same quality and price. The later bid is first in the input."""
+    standings = (
+        Standing("bid-later", 82.0, 700_000, True, _LATER),
+        Standing("bid-earlier", 82.0, 700_000, True, _EARLIER),
+    )
+    ranked = rank_bids(standings, 0.6)
+    assert [item.bid_id for item in ranked] == ["bid-earlier", "bid-later"]
+    assert round(ranked[0].final_score, 1) == 89.2
+    assert round(ranked[1].final_score, 1) == 89.2
+    assert ranked[0].quality == ranked[1].quality == 82.0

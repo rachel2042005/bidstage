@@ -73,7 +73,9 @@ def rank_bids(standings: Sequence[Standing], alpha: float) -> tuple[RankedBid, .
     """Rank qualified bids by final score, highest first (`T-SC-7`).
 
     The price pool is the qualified standings only. A disqualified standing
-    is omitted. With no qualified bid the ranking is empty.
+    is omitted. With no qualified bid the ranking is empty. Equal finals
+    break by higher quality, then by earlier `submitted_at` (`T-SC-16`,
+    `T-SC-17`). A residual tie keeps input order.
     """
     qualified = [standing for standing in standings if standing.qualified]
     if not qualified:
@@ -83,7 +85,7 @@ def rank_bids(standings: Sequence[Standing], alpha: float) -> tuple[RankedBid, .
     for standing in qualified:
         component = price_score(standing.price, lowest)
         scored.append((standing, component, final_score(standing.quality, component, alpha)))
-    scored.sort(key=lambda item: item[2], reverse=True)
+    scored.sort(key=lambda item: (-item[2], -item[0].quality, item[0].submitted_at))
     return tuple(
         RankedBid(
             bid_id=standing.bid_id,
