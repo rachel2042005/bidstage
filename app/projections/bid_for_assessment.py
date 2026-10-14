@@ -3,6 +3,8 @@
 `enqueue_bid_for_assessment` inserts one pending row.
 `SqlAssessmentQueue.claim` locks the oldest pending row, marks it claimed,
 and commits before returning (`T-AG-39`, `T-AG-11`).
+`release_stalled_claims` returns a claimed row to pending when `claimed_at`
+is strictly older than the timeout. The caller commits (`T-AG-43`, `T-AG-44`).
 """
 
 from __future__ import annotations
@@ -38,6 +40,13 @@ FROM dbo.rm_bid_for_assessment AS q
 INNER JOIN next_bid ON q.bid_id = next_bid.bid_id
 """
 
+_RELEASE_STALLED = """
+UPDATE dbo.rm_bid_for_assessment
+SET status = 'pending', claimed_at = NULL
+WHERE status = 'claimed'
+  AND claimed_at < DATEADD(second, ?, SYSUTCDATETIME())
+"""
+
 
 def enqueue_bid_for_assessment(
     conn: pyodbc.Connection,
@@ -66,6 +75,13 @@ def enqueue_bid_for_assessment(
         concept,
         json.dumps(list(responses), ensure_ascii=False),
     )
+    cursor.close()
+
+
+def release_stalled_claims(conn: pyodbc.Connection, timeout_seconds: int) -> None:
+    """Return stalled claims to pending. The caller commits."""
+    cursor = conn.cursor()
+    cursor.execute(_RELEASE_STALLED, -timeout_seconds)
     cursor.close()
 
 

@@ -197,7 +197,7 @@ Three of those read models have columns now (`T-CMD-13` … `T-CMD-18`):
 
 `status` is `qualified` or `disqualified`. `tender_id` is taken from `BidSubmitted` when that event is already on the bid stream. A threshold disqualification leaves `quality_score` null and writes no requirement rows. `rm_bid_ranking` has no row for a disqualified bid.
 
-One further projection serves no query: `rm_bid_for_assessment` is the agent's work queue and bid-content source (`05-agent-spec.md` §2). `enqueue_bid_for_assessment` inserts one `pending` row from `BidSubmitted` fields only. `SqlAssessmentQueue.claim` takes the oldest `pending` row, sets `claimed`, and commits before it returns. `SqlCompleteAssessmentHandler` sets that row to `completed` in the same transaction as the terminal event; zero rows updated is success. Columns:
+One further projection serves no query: `rm_bid_for_assessment` is the agent's work queue and bid-content source (`05-agent-spec.md` §2). `enqueue_bid_for_assessment` inserts one `pending` row from `BidSubmitted` fields only. `SqlAssessmentQueue.claim` takes the oldest `pending` row, sets `claimed`, and commits before it returns. `release_stalled_claims(conn, timeout_seconds)` sets `status` back to `pending` and `claimed_at` to null where `status` is `claimed` and `claimed_at` is strictly earlier than `SYSUTCDATETIME()` minus `timeout_seconds` (`T-AG-43`). A claim inside that window stays `claimed` (`T-AG-44`). The caller commits. The function does not read or write `RequirementScored`, and nothing calls it yet. `SqlCompleteAssessmentHandler` sets that row to `completed` in the same transaction as the terminal event; zero rows updated is success. Columns:
 
 | Column | Notes |
 | --- | --- |
@@ -206,7 +206,7 @@ One further projection serves no query: `rm_bid_for_assessment` is the agent's w
 | `responses_json` | The `BidSubmitted` response list. No price |
 | `status` | `pending`, `claimed`, or `completed` |
 | `queued_at` | Default `SYSUTCDATETIME()`; claim order |
-| `claimed_at` | Null until claim |
+| `claimed_at` | Null until claim; null again when a stalled claim is released |
 
 `GetTenderRequirements` is the read behind the MCP tool in §7. It is separate from `GetTenderDetails`, because that UI query may later carry bids and this one must not be able to. The handler returns `{tender, requirements, approved_hosts}`, or nothing when the tender is absent. The protocol is `app/queries/tender_requirements.py`. Its SQL handler arrives with the projections; until then the tool is exercised against an in-memory query.
 

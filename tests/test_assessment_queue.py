@@ -1,14 +1,16 @@
 """Assessment queue projection and claim.
 
-Seams: `create_schema`, later `enqueue_bid_for_assessment` and
-`SqlAssessmentQueue.claim`. Skips when SQL Server is not configured.
-Fresh ids. Nothing is deleted.
+Seams: `create_schema`, later `enqueue_bid_for_assessment`,
+`SqlAssessmentQueue.claim`, and `release_stalled_claims`. Skips when SQL
+Server is not configured. Fresh ids. Nothing is deleted.
 
 T-AG-1 — rm_bid_for_assessment has the locked columns and no price column.
 T-AG-39 — one pending bid is claimed once, with its venue answer intact.
 T-AG-40 — a sealed price on the bid stream stays out of the queue and the claim.
 T-AG-11 — two connections claim one pending bid; one receives it.
 T-CMD-19 — completion marks the queued bid completed, so claim returns nothing.
+T-AG-43 — a claim older than the timeout returns to pending and can be claimed.
+T-AG-44 — a claim inside the timeout stays claimed.
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ from app.events.schema import create_schema  # noqa: E402
 from app.projections.bid_for_assessment import (  # noqa: E402
     SqlAssessmentQueue,
     enqueue_bid_for_assessment,
+    release_stalled_claims,
 )
 
 _COLUMNS = {
@@ -65,6 +68,40 @@ def _skip_unless_configured() -> None:
         pytest.skip(
             "SOMEE_DB_CONNECTION_STRING still holds the .env.example placeholder."
         )
+
+
+def _make_oldest_pending(conn, bid_id: str) -> None:
+    """Claim takes the oldest queued row. This fixture has to be that row."""
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE dbo.rm_bid_for_assessment
+        SET queued_at = DATEADD(day, -1, (
+            SELECT MIN(queued_at) FROM dbo.rm_bid_for_assessment
+        ))
+        WHERE bid_id = ?
+        """,
+        bid_id,
+    )
+    cursor.close()
+
+
+def _timeout_past_other_claims(conn, bid_id: str) -> int:
+    """A timeout this fixture can outrun without releasing any other claim."""
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT MAX(DATEDIFF(second, claimed_at, SYSUTCDATETIME()))
+        FROM dbo.rm_bid_for_assessment
+        WHERE bid_id <> ? AND claimed_at IS NOT NULL
+        """,
+        bid_id,
+    )
+    oldest = cursor.fetchone()[0]
+    cursor.close()
+    if oldest is None or oldest < 0:
+        oldest = 0
+    return oldest + 120
 
 
 def test_assessment_queue_schema_has_no_price_column() -> None:
@@ -274,3 +311,109 @@ def test_completion_closes_the_queued_bid() -> None:
 
     assert status == "completed"
     assert work is None
+
+
+def test_stalled_claim_returns_to_pending_and_can_be_claimed_again() -> None:
+    """T-AG-43. A claim older than the timeout is pending again and claimable."""
+    _skip_unless_configured()
+    bid_id = f"bid-{uuid.uuid4()}"
+    tender_id = f"tender-{uuid.uuid4()}"
+    conn = connect()
+    try:
+        create_schema(conn)
+        conn.commit()
+        enqueue_bid_for_assessment(
+            conn,
+            bid_id,
+            tender_id,
+            "sup-1",
+            "טקס",
+            [{"requirement_id": "req-venue", "answer": "אולם"}],
+        )
+        _make_oldest_pending(conn, bid_id)
+        first = SqlAssessmentQueue(conn).claim()
+        timeout_seconds = _timeout_past_other_claims(conn, bid_id)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE dbo.rm_bid_for_assessment
+            SET claimed_at = DATEADD(second, ?, SYSUTCDATETIME())
+            WHERE bid_id = ?
+            """,
+            -(timeout_seconds + 1),
+            bid_id,
+        )
+        cursor.close()
+        conn.commit()
+        release_stalled_claims(conn, timeout_seconds)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT status, claimed_at
+            FROM dbo.rm_bid_for_assessment
+            WHERE bid_id = ?
+            """,
+            bid_id,
+        )
+        status, claimed_at = cursor.fetchone()
+        cursor.close()
+        again = SqlAssessmentQueue(conn).claim()
+    finally:
+        conn.close()
+
+    assert first is not None
+    assert first.bid_id == bid_id
+    assert status == "pending"
+    assert claimed_at is None
+    assert again == AssessmentWork(
+        bid_id=bid_id,
+        tender_id=tender_id,
+        supplier_id="sup-1",
+        answers={"req-venue": "אולם"},
+    )
+
+
+def test_fresh_claim_stays_claimed_inside_the_timeout() -> None:
+    """T-AG-44. A claim inside the timeout stays claimed and is not taken again."""
+    _skip_unless_configured()
+    bid_id = f"bid-{uuid.uuid4()}"
+    tender_id = f"tender-{uuid.uuid4()}"
+    conn = connect()
+    try:
+        create_schema(conn)
+        conn.commit()
+        enqueue_bid_for_assessment(
+            conn,
+            bid_id,
+            tender_id,
+            "sup-1",
+            "טקס",
+            [{"requirement_id": "req-venue", "answer": "היכל"}],
+        )
+        _make_oldest_pending(conn, bid_id)
+        work = SqlAssessmentQueue(conn).claim()
+        release_stalled_claims(conn, _timeout_past_other_claims(conn, bid_id))
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT status, claimed_at
+            FROM dbo.rm_bid_for_assessment
+            WHERE bid_id = ?
+            """,
+            bid_id,
+        )
+        status, claimed_at = cursor.fetchone()
+        cursor.close()
+        second = SqlAssessmentQueue(conn).claim()
+    finally:
+        conn.close()
+
+    assert work == AssessmentWork(
+        bid_id=bid_id,
+        tender_id=tender_id,
+        supplier_id="sup-1",
+        answers={"req-venue": "היכל"},
+    )
+    assert status == "claimed"
+    assert claimed_at is not None
+    assert second is None
