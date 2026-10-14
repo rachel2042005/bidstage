@@ -2,8 +2,9 @@
 
 Run with: python -m agent.runner
 
-`run_once` claims one bid and finishes its assessment (`T-AG-27`). The SQL
-queue is not connected, so `main` does not poll.
+`run_once` claims one bid and finishes its assessment (`T-AG-27`). The poll
+loop is `run_forever` in `agent.worker`. `main` does not start it: the claim
+projection `rm_bid_for_assessment` is not connected.
 """
 
 from __future__ import annotations
@@ -146,6 +147,7 @@ def run_once(
 
 
 def main() -> None:
+    """Print the poll interval. `run_forever` stays unwired until bids can be claimed."""
     settings = load_settings()
     print(f"Agent started; polling every {settings.agent_poll_seconds}s.")
     print("rm_bid_for_assessment is not connected; no bids claimed.")
