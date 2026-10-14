@@ -2,13 +2,19 @@
 
 Run with: python -m agent.runner
 
-`run_once` claims one bid and finishes its assessment (`T-AG-27`). The poll
-loop is `run_forever` in `agent.worker`. `main` does not start it: the claim
-projection `rm_bid_for_assessment` is not connected.
+`run_once` claims one bid and finishes its assessment (`T-AG-27`).
+`main(["--once"])` runs that cycle once (`T-AG-41`). With no flag, `main`
+calls `run_forever` (`T-AG-42`). `build_runtime` supplies the queue and a
+`complete` callable on its own transaction. The other ports stay parameters.
 """
 
 from __future__ import annotations
 
+import signal
+import sys
+import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 
@@ -58,6 +64,24 @@ class Completion(Protocol):
     """`CompleteAssessment` handler."""
 
     def __call__(self, command: QualityAssessmentCompleted | BidDisqualified) -> None: ...
+
+
+@dataclass(frozen=True)
+class AgentRuntime:
+    """Dependencies for one agent process. `complete` uses its own transaction."""
+
+    queue: AssessmentQueue
+    requirements: RequirementsTool
+    rubrics: RubricIndex
+    search: EvidenceSearch
+    web: PageSearch
+    venue_model: VenueModel
+    content_model: ContentModel
+    experience_model: ExperienceModel
+    host_model: HostModel
+    music_model: MusicModel
+    submit: ScoreTool
+    complete: Completion
 
 
 def run_once(
@@ -146,11 +170,121 @@ def run_once(
     return 1
 
 
-def main() -> None:
-    """Print the poll interval. `run_forever` stays unwired until bids can be claimed."""
+def build_runtime(
+    settings: Any,
+    *,
+    requirements: RequirementsTool,
+    search: EvidenceSearch,
+    web: PageSearch,
+    venue_model: VenueModel,
+    content_model: ContentModel,
+    experience_model: ExperienceModel,
+    host_model: HostModel,
+    music_model: MusicModel,
+    submit: ScoreTool,
+) -> Any:
+    """Queue and completion on separate connections. Rubrics come from Chroma."""
+    from app.commands.complete_assessment import SqlCompleteAssessmentHandler
+    from app.events.db import connect, transaction
+    from app.infrastructure.vector_store import ChromaVectorStore
+    from app.projections.bid_for_assessment import SqlAssessmentQueue
+    from app.services.semantic_search_service import SemanticSearchService
+
+    queue = SqlAssessmentQueue(connect())
+    rubrics = SemanticSearchService(ChromaVectorStore(settings))
+
+    def complete(command: QualityAssessmentCompleted | BidDisqualified) -> None:
+        with transaction() as conn:
+            SqlCompleteAssessmentHandler(conn).handle(command)
+
+    return AgentRuntime(
+        queue=queue,
+        requirements=requirements,
+        rubrics=rubrics,
+        search=search,
+        web=web,
+        venue_model=venue_model,
+        content_model=content_model,
+        experience_model=experience_model,
+        host_model=host_model,
+        music_model=music_model,
+        submit=submit,
+        complete=complete,
+    )
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    runtime: Callable[[Any], Any] | None = None,
+    cycle: Callable[..., int] = run_once,
+    forever: Callable[..., None] | None = None,
+) -> None:
+    """Run one cycle, or the poll loop, with dependencies from `runtime`."""
     settings = load_settings()
-    print(f"Agent started; polling every {settings.agent_poll_seconds}s.")
-    print("rm_bid_for_assessment is not connected; no bids claimed.")
+    args = sys.argv[1:] if argv is None else list(argv)
+    if runtime is None:
+        runtime = build_runtime
+    deps = runtime(settings)
+    bound = _deps(deps)
+    if args == ["--once"]:
+        cycle(**bound)
+        return
+    if args:
+        raise SystemExit(2)
+    if forever is None:
+        from agent.worker import run_forever
+
+        forever = run_forever
+    stop, restore = _install_stop()
+    try:
+        forever(
+            **bound,
+            interval=settings.agent_poll_seconds,
+            sleep=time.sleep,
+            stop=stop,
+            cycle=cycle,
+        )
+    finally:
+        restore()
+
+
+def _deps(deps: Any) -> dict[str, Any]:
+    return {
+        "queue": deps.queue,
+        "requirements": deps.requirements,
+        "rubrics": deps.rubrics,
+        "search": deps.search,
+        "web": deps.web,
+        "venue_model": deps.venue_model,
+        "content_model": deps.content_model,
+        "experience_model": deps.experience_model,
+        "host_model": deps.host_model,
+        "music_model": deps.music_model,
+        "submit": deps.submit,
+        "complete": deps.complete,
+    }
+
+
+def _install_stop() -> tuple[Callable[[], bool], Callable[[], None]]:
+    flag = threading.Event()
+    previous: list[tuple[signal.Signals, Any]] = []
+
+    def handler(signum: int, frame: object) -> None:
+        del signum, frame
+        flag.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            previous.append((sig, signal.signal(sig, handler)))
+        except (ValueError, OSError):
+            continue
+
+    def restore() -> None:
+        for sig, old in reversed(previous):
+            signal.signal(sig, old)
+
+    return flag.is_set, restore
 
 
 if __name__ == "__main__":

@@ -8,9 +8,13 @@ T-AG-27 — weights 40/30/30 and three scores of 9 complete at quality 90.0.
 A second call claims nothing.
 T-AG-28 — the VENUE threshold scores 4 and the bid is disqualified.
 T-AG-29 — scores 5, 4, and 6 finish every requirement at quality 50.0.
+T-AG-41 — `main(["--once"])` runs one cycle and does not start the poll loop.
+T-AG-42 — `main([])` starts the poll loop at `settings.agent_poll_seconds`.
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 from agent.subagents.content import ContentAssessment, ContentMaterial
 from agent.subagents.experience import ExperienceAssessment, ExperienceMaterial
@@ -20,8 +24,9 @@ from app.commands.complete_assessment import (
     QualityAssessmentCompleted,
     RequirementScore,
 )
+from app.config import load_settings
 from app.services.semantic_search_service import SemanticSearchService
-from agent.runner import AssessmentWork, run_once
+from agent.runner import AssessmentWork, main, run_once
 from mcp_server.server import get_tender_requirements, submit_requirement_score
 from tests.test_orchestrator import (
     _BID,
@@ -347,3 +352,80 @@ def test_quality_below_60_disqualifies_the_bid() -> None:
             quality_score=50.0,
         )
     ]
+
+
+def _dispatch_runtime() -> SimpleNamespace:
+    return SimpleNamespace(
+        queue=object(),
+        requirements=object(),
+        rubrics=object(),
+        search=object(),
+        web=object(),
+        venue_model=object(),
+        content_model=object(),
+        experience_model=object(),
+        host_model=object(),
+        music_model=object(),
+        submit=object(),
+        complete=object(),
+    )
+
+
+def test_once_runs_a_single_cycle() -> None:
+    """T-AG-41. One cycle receives the runtime. The poll loop stays idle."""
+    runtime = _dispatch_runtime()
+    seen: dict[str, object] = {}
+
+    def cycle(queue: object, **kwargs: object) -> int:
+        seen["queue"] = queue
+        seen["kwargs"] = kwargs
+        return 0
+
+    def forever(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("forever")
+
+    main(["--once"], runtime=lambda _settings: runtime, cycle=cycle, forever=forever)
+
+    assert seen["queue"] is runtime.queue
+    kwargs = seen["kwargs"]
+    assert kwargs["complete"] is runtime.complete
+    assert kwargs["venue_model"] is runtime.venue_model
+    assert kwargs["content_model"] is runtime.content_model
+    assert kwargs["experience_model"] is runtime.experience_model
+    assert kwargs["host_model"] is runtime.host_model
+    assert kwargs["music_model"] is runtime.music_model
+    assert kwargs["requirements"] is runtime.requirements
+    assert kwargs["rubrics"] is runtime.rubrics
+    assert kwargs["search"] is runtime.search
+    assert kwargs["web"] is runtime.web
+    assert kwargs["submit"] is runtime.submit
+
+
+def test_default_starts_the_poll_loop() -> None:
+    """T-AG-42. The loop receives the runtime and the configured poll interval."""
+    runtime = _dispatch_runtime()
+    seen: dict[str, object] = {}
+
+    def cycle(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("cycle")
+
+    def forever(queue: object, **kwargs: object) -> None:
+        seen["queue"] = queue
+        seen["kwargs"] = kwargs
+
+    main([], runtime=lambda _settings: runtime, cycle=cycle, forever=forever)
+
+    assert seen["queue"] is runtime.queue
+    kwargs = seen["kwargs"]
+    assert kwargs["interval"] == load_settings().agent_poll_seconds
+    assert kwargs["complete"] is runtime.complete
+    assert kwargs["venue_model"] is runtime.venue_model
+    assert kwargs["content_model"] is runtime.content_model
+    assert kwargs["experience_model"] is runtime.experience_model
+    assert kwargs["host_model"] is runtime.host_model
+    assert kwargs["music_model"] is runtime.music_model
+    assert kwargs["requirements"] is runtime.requirements
+    assert kwargs["rubrics"] is runtime.rubrics
+    assert kwargs["search"] is runtime.search
+    assert kwargs["web"] is runtime.web
+    assert kwargs["submit"] is runtime.submit
