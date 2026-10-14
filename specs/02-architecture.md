@@ -159,6 +159,10 @@ Steps 3 and 4 share one transaction, so a read model can never reflect an event 
 
 `ScoreRequirement` is issued by the agent through `submit_requirement_score`; the rest originate from the UI. `RevealPrices` is issued by the web process only — never the agent.
 
+`CompleteAssessment` is the in-process command behind `run_once`. Its SQL handler appends `QualityAssessmentCompleted` or `BidDisqualified` on the bid stream and, in that same transaction, projects `rm_bid_assessment`. A qualified completion also projects one `rm_requirement_score` row per requirement in the payload. The handler does not read `PriceOfferSealed`. A bid stream that already has either terminal event rejects a second completion (`T-CMD-15`).
+
+`RevealPrices` replays the tender stream and every bid stream whose `BidSubmitted` names that tender. A bid that is not `QualityAssessmentCompleted` or `BidDisqualified` rejects the command and appends nothing (`INV-3`, `T-CMD-16`). When at least one bid is qualified, the handler loads `alpha` from `TenderCreated`, each qualified bid's `price_amount` from `PriceOfferSealed`, and `submitted_at` from `BidSubmitted.created_at`, calls `rank_bids`, and appends `PricesRevealed` then `FinalRankingCalculated`. It projects `rm_bid_ranking` for those qualified bids only. When every bid is terminal and none is qualified, it appends `TenderFailed` with `reason` `no_qualified_bids` and does not append `PricesRevealed` (`T-CMD-18`).
+
 ---
 
 ## 4. Read path
@@ -181,6 +185,16 @@ A query handler that opens the events table is a defect (`NFR-CQRS-2`).
 | `GetTenderRequirements` | `rm_tender_detail`, `rm_requirement`, approved-hosts reference table |
 
 `rm_dashboard` holds bid counts and status per tender so `FR-DASH-5` holds. Deadline countdowns are rendered client-side from the stored deadline; the server stores no ticking value.
+
+Three of those read models have columns now (`T-CMD-13` … `T-CMD-18`):
+
+| Table | Columns |
+| --- | --- |
+| `dbo.rm_bid_assessment` | `bid_id`, `tender_id`, `status`, `quality_score`, `reason`, `failed_requirement_id` |
+| `dbo.rm_requirement_score` | `bid_id`, `requirement_id`, `score`, `weight` |
+| `dbo.rm_bid_ranking` | `tender_id`, `bid_id`, `quality`, `price_amount`, `price_score`, `final_score`, `rank` |
+
+`status` is `qualified` or `disqualified`. `tender_id` is taken from `BidSubmitted` when that event is already on the bid stream. A threshold disqualification leaves `quality_score` null and writes no requirement rows. `rm_bid_ranking` has no row for a disqualified bid.
 
 One further projection serves no query: `rm_bid_for_assessment` is the agent's work queue and bid-content source (`05-agent-spec.md` §2). It carries `bid_id`, `tender_id`, `concept` and the per-requirement responses, and deliberately **omits price**.
 

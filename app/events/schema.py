@@ -43,6 +43,58 @@ BEGIN
 END
 """
 
+# Read models projected in the same transaction as the event that produced them.
+# rm_bid_for_assessment is still absent: the agent queue is not this slice.
+CREATE_RM_BID_ASSESSMENT = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables WHERE name = 'rm_bid_assessment' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.rm_bid_assessment (
+        bid_id                  VARCHAR(100)  NOT NULL,
+        tender_id               VARCHAR(100)  NULL,
+        status                  VARCHAR(20)   NOT NULL,
+        quality_score           FLOAT         NULL,
+        reason                  VARCHAR(50)   NULL,
+        failed_requirement_id   VARCHAR(100)  NULL,
+        CONSTRAINT pk_rm_bid_assessment PRIMARY KEY (bid_id)
+    );
+END
+"""
+
+CREATE_RM_REQUIREMENT_SCORE = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables WHERE name = 'rm_requirement_score' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.rm_requirement_score (
+        bid_id          VARCHAR(100) NOT NULL,
+        requirement_id  VARCHAR(100) NOT NULL,
+        score           INT          NOT NULL,
+        weight          INT          NOT NULL,
+        CONSTRAINT pk_rm_requirement_score PRIMARY KEY (bid_id, requirement_id)
+    );
+END
+"""
+
+CREATE_RM_BID_RANKING = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables WHERE name = 'rm_bid_ranking' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.rm_bid_ranking (
+        tender_id     VARCHAR(100) NOT NULL,
+        bid_id        VARCHAR(100) NOT NULL,
+        quality       FLOAT        NOT NULL,
+        price_amount  INT          NOT NULL,
+        price_score   FLOAT        NOT NULL,
+        final_score   FLOAT        NOT NULL,
+        rank          INT          NOT NULL,
+        CONSTRAINT pk_rm_bid_ranking PRIMARY KEY (tender_id, bid_id)
+    );
+END
+"""
+
 TABLE_EXISTS = (
     "SELECT COUNT(*) FROM sys.tables "
     "WHERE name = 'events' AND schema_id = SCHEMA_ID('dbo')"
@@ -62,6 +114,9 @@ def create_schema(conn: pyodbc.Connection) -> None:
     cursor = conn.cursor()
     cursor.execute(CREATE_EVENTS_TABLE)
     cursor.execute(CREATE_EVENT_TYPE_INDEX)
+    cursor.execute(CREATE_RM_BID_ASSESSMENT)
+    cursor.execute(CREATE_RM_REQUIREMENT_SCORE)
+    cursor.execute(CREATE_RM_BID_RANKING)
     cursor.close()
 
 

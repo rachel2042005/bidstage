@@ -104,8 +104,16 @@ One test per invariant in `03-domain-events.md` §3, each constructing an illega
 | `T-CMD-10` | `OverrideScore` with empty justification | Rejected (`FR-EVAL-7`) |
 | `T-CMD-11` | Override that changes the qualified set | Every bid's price score recomputed, not just the overridden one (`04` §9 step 4) |
 | `T-CMD-12` | Any query handler touching `Events` | Absent; asserted by static check (`NFR-CQRS-2`) |
+| `T-CMD-13` | `QualityAssessmentCompleted` at quality 90.0 | Next bid version; `rm_bid_assessment.status` is `qualified`; requirement rows match the payload |
+| `T-CMD-14` | Threshold `BidDisqualified` | `reason` `threshold`, `failed_requirement_id` set, `quality_score` null, no requirement rows |
+| `T-CMD-15` | Second terminal command for one bid | Raises; the bid stream stays one event long |
+| `T-CMD-16` | `RevealPrices` while a bid is not terminal | Raises; the tender stream gains nothing (`INV-3`) |
+| `T-CMD-17` | Worked example, both bids qualified, α = 0.6 | `PricesRevealed` then `FinalRankingCalculated`; B rank 1 at 84.4, A rank 2 at 80.3 |
+| `T-CMD-18` | Every bid disqualified | `TenderFailed` with `reason` `no_qualified_bids`; no `PricesRevealed` |
 
 `T-CMD-11` targets the subtle bug in override handling: reordering is systemic, not local.
+
+`tests/test_assessment_sql.py` covers `T-CMD-13` through `T-CMD-18` against SQL Server. The suite skips when `SOMEE_DB_CONNECTION_STRING` is unset. Each test uses a fresh stream id and does not delete. `SqlCompleteAssessmentHandler` is the seam for the terminal events. `SqlRevealPricesHandler` is the seam for reveal and `TenderFailed`. Streams are read back through `EventStore`. Read models are read with `SELECT`.
 
 ---
 
