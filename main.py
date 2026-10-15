@@ -13,6 +13,7 @@ from flask import Flask, render_template, session  # noqa: E402
 
 from app.config import ConfigError, load_settings  # noqa: E402
 from app.routes.auth import bp as auth_bp  # noqa: E402
+from app.routes.bid_search import bp as bid_search_bp  # noqa: E402
 from app.routes.bids import bp as bids_bp  # noqa: E402
 from app.routes.comparison import bp as comparison_bp  # noqa: E402
 from app.routes.formatting import (  # noqa: E402
@@ -31,7 +32,15 @@ from app.routes.tenders import (  # noqa: E402
 )
 
 
-def create_app(*, event_store=None, users=None, tenders=None, bids=None, bid_notifier=None) -> Flask:
+def create_app(
+    *,
+    event_store=None,
+    users=None,
+    tenders=None,
+    bids=None,
+    bid_notifier=None,
+    bid_search=None,
+) -> Flask:
     try:
         settings = load_settings()
         secret = settings.flask_secret_key or "dev-only-not-for-demo"
@@ -66,11 +75,14 @@ def create_app(*, event_store=None, users=None, tenders=None, bids=None, bid_not
         )
     if bid_notifier is not None:
         app.extensions["bid_notifier"] = bid_notifier
+    if bid_search is not None:
+        app.extensions["bid_search"] = bid_search
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(pages_bp)
     app.register_blueprint(tenders_bp)
     app.register_blueprint(bids_bp)
+    app.register_blueprint(bid_search_bp)
     app.register_blueprint(comparison_bp)
 
     app.add_template_filter(format_shekels, "shekels")
