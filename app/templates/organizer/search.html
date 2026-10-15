@@ -2,7 +2,8 @@
 {% block title %}חיפוש בהצעות · BidStage{% endblock %}
 {% block content %}
 <h1 class="h3 mb-3">חיפוש בהצעות</h1>
-<form method="get" action="{{ url_for('bid_search.organizer_search') }}" class="row g-2 align-items-end mb-4">
+<form method="get" action="{{ url_for('bid_search.organizer_search') }}" class="card card-body mb-4">
+<div class="row g-2 align-items-end">
   <div class="col-md-6">
     <label class="form-label" for="q">טקסט</label>
     <input class="form-control" id="q" name="q" value="{{ query }}">
@@ -19,6 +20,7 @@
   <div class="col-md-2">
     <button type="submit" class="btn btn-primary w-100">חיפוש</button>
   </div>
+</div>
 </form>
 {% if notice %}
 <p>{{ notice }}</p>

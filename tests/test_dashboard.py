@@ -7,6 +7,7 @@ and the organizer HTTP pages.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 
 import pytest
 
@@ -381,4 +382,98 @@ def test_dashboard_and_comparison_pages_hide_prices_until_reveal(client, backend
     assert body.index("ספק ב") < body.index("ספק א")
     assert "84.4" in body
     assert "80.3" in body
+
+
+def test_dashboard_chart_payload_matches_the_groups_and_hides_other_organizers(client, backend):
+    import json
+
+    from app.domain.user import ORGANIZER, SUPPLIER
+    from tests.test_tenders import _sign_in
+
+    store, _users, tenders, bids = backend
+    tender_id = _open(store, tenders)
+    _offer(store, tenders, bids, tender_id, "sup-a", "ספק א", 90_000_000, PUBLISHED_AT)
+    _offer(
+        store, tenders, bids, tender_id, "sup-b", "ספק ב", 70_000_000, PUBLISHED_AT.replace(minute=5)
+    )
+    _sign_in(client, ORGANIZER)
+    home = client.get("/organizer/")
+    body = home.get_data(as_text=True)
+    assert home.status_code == 200
+    payload = json.loads(_script_text(body, "dashboard-charts"))
+    assert payload["statuses"] == [
+        {"key": "draft", "label": "טיוטה", "count": 0, "anchor": "group-draft"},
+        {"key": "open", "label": "פתוח להצעות", "count": 1, "anchor": "group-open"},
+        {"key": "under_evaluation", "label": "בהערכה", "count": 0, "anchor": "group-under-evaluation"},
+        {"key": "decided", "label": "הוכרע", "count": 0, "anchor": "group-decided"},
+        {"key": "failed", "label": "נכשל", "count": 0, "anchor": "group-failed"},
+        {"key": "cancelled", "label": "בוטל", "count": 0, "anchor": "group-cancelled"},
+    ]
+    assert payload["bids"] == [
+        {
+            "name": "טקס פרסים",
+            "bid_count": 2,
+            "url": f"/organizer/tenders/{tender_id}",
+        }
+    ]
+    assert "900,000" not in body
+    assert "700,000" not in body
+    assert "chart.js" in body
+    for anchor in (
+        "group-draft",
+        "group-open",
+        "group-under-evaluation",
+        "group-decided",
+        "group-failed",
+        "group-cancelled",
+    ):
+        assert f'id="{anchor}"' in body
+    assert body.count("אין מכרזים") == 5
+    assert 'data-deadline="' in body
+    assert ">2</span> הצעות" in body
+
+    _sign_in(client, SUPPLIER, user_id="sup-a")
+    forbidden = client.get("/organizer/")
+    forbidden_body = forbidden.get_data(as_text=True)
+    assert forbidden.status_code == 403
+    assert "dashboard-charts" not in forbidden_body
+    assert "טקס פרסים" not in forbidden_body
+
+    _sign_in(client, ORGANIZER, user_id="org-2")
+    foreign = client.get("/organizer/").get_data(as_text=True)
+    foreign_payload = json.loads(_script_text(foreign, "dashboard-charts"))
+    assert foreign_payload["bids"] == []
+    assert "טקס פרסים" not in foreign
+    assert all(item["count"] == 0 for item in foreign_payload["statuses"])
+
+    client.get("/logout")
+    anonymous = client.get("/organizer/", follow_redirects=False)
+    assert anonymous.status_code == 302
+    assert "/login" in anonymous.headers["Location"]
+
+
+class _ScriptGrabber(HTMLParser):
+    def __init__(self, script_id: str) -> None:
+        super().__init__()
+        self.script_id = script_id
+        self._capture = False
+        self.text: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "script" and dict(attrs).get("id") == self.script_id:
+            self._capture = True
+
+    def handle_endtag(self, tag):
+        if tag == "script":
+            self._capture = False
+
+    def handle_data(self, data):
+        if self._capture:
+            self.text.append(data)
+
+
+def _script_text(html: str, script_id: str) -> str:
+    grabber = _ScriptGrabber(script_id)
+    grabber.feed(html)
+    return "".join(grabber.text)
 
