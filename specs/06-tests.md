@@ -183,6 +183,16 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 | `T-AG-42` | `main([])` with a fake runtime | `run_forever` receives that runtime and `interval` equal to `settings.agent_poll_seconds`; `main` does not call `run_once` |
 | `T-AG-43` | A claimed row whose `claimed_at` is strictly older than the timeout | `release_stalled_claims` sets `status` to `pending` and `claimed_at` to null; the next `claim` returns that bid |
 | `T-AG-44` | A claimed row whose `claimed_at` is inside the timeout | The row stays `claimed` with `claimed_at` set; the next `claim` returns nothing |
+| `T-AG-45` | `TAVILY_API_KEY` is empty | `search` returns `()` and does not call Tavily |
+| `T-AG-46` | Tavily returns one hit for `היכל` | The page is `url` `https://example.com/hall`, `title` `Hall`, `content` `5000 seats`. The request is `POST https://api.tavily.com/search` and carries that query and the key |
+| `T-AG-47` | Venue model JSON with `proposed_score` 4 | `assess_venue` returns that `VenueAssessment` and the call's temperature is 0. Score 11 and `true` are rejected |
+| `T-AG-48` | Content model JSON with `proposed_score` 4 | `assess_content` returns that `ContentAssessment` at temperature 0 |
+| `T-AG-49` | Host model JSON with `proposed_score` 4 | `assess_host` returns that `HostAssessment` at temperature 0 |
+| `T-AG-50` | Music model JSON with `proposed_score` 4 | `assess_music` returns that `MusicAssessment` at temperature 0 |
+| `T-AG-51` | Experience model JSON with `proposed_score` 4 | `assess_experience` returns that `ExperienceAssessment` at temperature 0 |
+| `T-AG-52` | `assess` is handed each material type | The same assessor returns that type's assessment |
+| `T-AG-53` | `AGENT_MODEL_PROVIDER` | `ollama` selects `qwen3:8b` and `http://localhost:11434/v1`. `openai` selects `gpt-4o-mini`. `ollama` plus `AGENT_MODEL=gpt-4o-mini` is rejected |
+| `T-AG-54` | `build_runtime(settings, requirements=..., submit=...)` with stand-ins for the queue and the vector store | `search` is the rubric service, `web.search` returns `()` when the key is empty, and one assessor is all five model ports. `requirements` and `submit` are the objects passed in |
 
 `tests/test_mcp_server.py` covers `T-AG-2` and `T-AG-3` against an in-memory `GetTenderRequirements` query. A price column on the view is absent from the payload. A `HOST` requirement includes the host list the query supplied. A blank id raises `ValueError` before lookup. An unknown id raises `TenderNotFound`. The same file covers `submit_requirement_score`: the dispatched `ScoreRequirement` is a known literal and the handler's `{"accepted": True, "event_version": 3}` is returned unchanged; scores outside 0–10, bools, and non-integers raise `ValueError` (`T-AG-5`, `T-AG-6`); blank text fields raise `ValueError` before dispatch; `ScoringRejected` propagates. `T-AG-4` waits for the SQL handler.
 
@@ -203,6 +213,8 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 `tests/test_worker.py` covers `T-AG-36`, `T-AG-37`, and `T-AG-38` at `run_forever`. The queue, `run_once`, and `sleep` are fakes. No SQL, Chroma, or model client is opened. The poll interval in these tests is 5 seconds.
 
 `tests/test_assessment_queue.py` covers `T-AG-1`, `T-AG-39`, `T-AG-40`, `T-AG-11`, `T-CMD-19`, `T-AG-43`, and `T-AG-44` against SQL Server. The suite skips when `SOMEE_DB_CONNECTION_STRING` is unset. `T-AG-39` enqueues the venue answer `היכל`. `T-AG-40` seals `900000` on the bid stream. `T-AG-11` claims one pending bid from two connections. `T-AG-43` ages that row past a timeout which still covers every other claim, so the sweep returns that bid alone and the next claim takes it. `T-AG-44` releases against that same kind of timeout immediately after claim.
+
+`tests/test_agent_ports.py` covers `T-AG-45` through `T-AG-54` without Tavily, OpenAI, Ollama, SQL Server, or Chroma. `T-AG-46` posts through a stand-in opener. `T-AG-47` through `T-AG-52` return a stand-in completion. `T-AG-54` passes stand-ins for the queue and the vector store.
 
 ### Score consistency
 

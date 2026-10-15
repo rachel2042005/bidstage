@@ -12,6 +12,19 @@ PLACEHOLDER_MARKER = "YOUR_SERVER"
 PROVIDER_OPENAI = "openai"
 PROVIDER_OLLAMA = "ollama"
 
+# Chat is independent of the embedding model. A switch here does not re-seed
+# Chroma. Defaults support structured JSON at temperature 0 (`NFR-AGT-3`).
+CHAT_PROVIDERS: dict[str, dict[str, object]] = {
+    PROVIDER_OPENAI: {
+        "model": "gpt-4o-mini",
+        "base_url": None,
+    },
+    PROVIDER_OLLAMA: {
+        "model": "qwen3:8b",
+        "base_url": "http://localhost:11434/v1",
+    },
+}
+
 # Model and dimension are properties of the provider, not free choices: a
 # mismatch produces vectors that are silently incomparable. They are therefore
 # derived from the provider rather than set alongside it.
@@ -48,6 +61,9 @@ class Settings:
     flask_secret_key: str
     agent_poll_seconds: int
     quality_floor: int
+    agent_model_provider: str
+    agent_model: str
+    agent_model_base_url: str | None
 
     @property
     def db_is_configured(self) -> bool:
@@ -93,6 +109,16 @@ def _embedding_provider() -> str:
     return provider
 
 
+def _chat_provider() -> str:
+    provider = os.getenv("AGENT_MODEL_PROVIDER", PROVIDER_OPENAI).strip().lower()
+    if provider not in CHAT_PROVIDERS:
+        raise ConfigError(
+            f"AGENT_MODEL_PROVIDER={provider!r} is not supported. Choose one of: "
+            f"{', '.join(sorted(CHAT_PROVIDERS))}."
+        )
+    return provider
+
+
 def load_settings() -> Settings:
     bootstrap.init()
     provider = _embedding_provider()
@@ -119,6 +145,20 @@ def load_settings() -> Settings:
     if provider == PROVIDER_OLLAMA:
         base_url = os.getenv("OLLAMA_BASE_URL", "").strip() or base_url
 
+    chat_provider = _chat_provider()
+    chat_defaults = CHAT_PROVIDERS[chat_provider]
+    chat_model = os.getenv("AGENT_MODEL", "").strip() or str(chat_defaults["model"])
+    for other, spec in CHAT_PROVIDERS.items():
+        if other != chat_provider and chat_model == spec["model"]:
+            raise ConfigError(
+                f"AGENT_MODEL_PROVIDER is {chat_provider!r} but AGENT_MODEL is "
+                f"set to {chat_model!r}, which belongs to the {other!r} provider. "
+                f"Remove AGENT_MODEL from .env to use the {chat_provider!r} default."
+            )
+    chat_base_url = chat_defaults["base_url"]
+    if chat_provider == PROVIDER_OLLAMA:
+        chat_base_url = os.getenv("OLLAMA_BASE_URL", "").strip() or chat_base_url
+
     return Settings(
         db_connection_string=_required("SOMEE_DB_CONNECTION_STRING"),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
@@ -132,4 +172,7 @@ def load_settings() -> Settings:
         flask_secret_key=os.getenv("FLASK_SECRET_KEY", ""),
         agent_poll_seconds=int(os.getenv("AGENT_POLL_SECONDS", "60")),
         quality_floor=int(os.getenv("QUALITY_FLOOR", "60")),
+        agent_model_provider=chat_provider,
+        agent_model=chat_model,
+        agent_model_base_url=chat_base_url if chat_base_url else None,
     )

@@ -4,8 +4,9 @@ Run with: python -m agent.runner
 
 `run_once` claims one bid and finishes its assessment (`T-AG-27`).
 `main(["--once"])` runs that cycle once (`T-AG-41`). With no flag, `main`
-calls `run_forever` (`T-AG-42`). `build_runtime` supplies the queue and a
-`complete` callable on its own transaction. The other ports stay parameters.
+calls `run_forever` (`T-AG-42`). `build_runtime(settings, *, requirements, submit)`
+supplies the queue, Tavily, one chat assessor, and a `complete` callable on its
+own transaction (`T-AG-54`). `requirements` and `submit` stay arguments.
 """
 
 from __future__ import annotations
@@ -174,24 +175,30 @@ def build_runtime(
     settings: Any,
     *,
     requirements: RequirementsTool,
-    search: EvidenceSearch,
-    web: PageSearch,
-    venue_model: VenueModel,
-    content_model: ContentModel,
-    experience_model: ExperienceModel,
-    host_model: HostModel,
-    music_model: MusicModel,
     submit: ScoreTool,
-) -> Any:
-    """Queue and completion on separate connections. Rubrics come from Chroma."""
+    queue: AssessmentQueue | None = None,
+    rubrics: RubricIndex | None = None,
+) -> AgentRuntime:
+    """Queue and completion on separate connections. Rubrics come from Chroma.
+
+    `queue` and `rubrics` default to SQL Server and Chroma. Tests pass stand-ins
+    so this function does not open either service (`T-AG-54`).
+    """
+    from agent.adapters.assessor import build_assessor
+    from agent.adapters.tavily import TavilyPageSearch
     from app.commands.complete_assessment import SqlCompleteAssessmentHandler
     from app.events.db import connect, transaction
-    from app.infrastructure.vector_store import ChromaVectorStore
-    from app.projections.bid_for_assessment import SqlAssessmentQueue
-    from app.services.semantic_search_service import SemanticSearchService
 
-    queue = SqlAssessmentQueue(connect())
-    rubrics = SemanticSearchService(ChromaVectorStore(settings))
+    if queue is None:
+        from app.projections.bid_for_assessment import SqlAssessmentQueue
+
+        queue = SqlAssessmentQueue(connect())
+    if rubrics is None:
+        from app.infrastructure.vector_store import ChromaVectorStore
+        from app.services.semantic_search_service import SemanticSearchService
+
+        rubrics = SemanticSearchService(ChromaVectorStore(settings))
+    model = build_assessor(settings)
 
     def complete(command: QualityAssessmentCompleted | BidDisqualified) -> None:
         with transaction() as conn:
@@ -201,13 +208,13 @@ def build_runtime(
         queue=queue,
         requirements=requirements,
         rubrics=rubrics,
-        search=search,
-        web=web,
-        venue_model=venue_model,
-        content_model=content_model,
-        experience_model=experience_model,
-        host_model=host_model,
-        music_model=music_model,
+        search=rubrics,
+        web=TavilyPageSearch(settings.tavily_api_key),
+        venue_model=model,
+        content_model=model,
+        experience_model=model,
+        host_model=model,
+        music_model=model,
         submit=submit,
         complete=complete,
     )

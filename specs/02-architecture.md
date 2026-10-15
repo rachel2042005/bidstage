@@ -32,7 +32,7 @@ Three processes run side by side. Keeping them separate is what satisfies *[5]*,
 │  Agent process       │  + rm_bid_for_     │
 │  deepagents          │    assessment      │
 │  5 sub-agents        │ ───────────────────┘
-└───────┬──────────────┘ ──▶ Tavily MCP (web search)
+└───────┬──────────────┘ ──▶ Tavily HTTP (web search)
         │ HttpClient
         ▼
 ┌──────────────────────┐
@@ -113,6 +113,9 @@ agent/
   worker.py                   # run_forever: drain, idle sleep, stop flag
   orchestrator.py             # Phase 4: Deep Agent planner
   subagents/                  # Phase 4: one per requirement type
+  adapters/
+    tavily.py                 # PageSearch over Tavily HTTP
+    assessor.py               # one chat client, five assessment schemas
 mcp_server/
   server.py                   # the two own FastMCP tools
   __main__.py                 # python -m mcp_server (stdio)
@@ -361,7 +364,7 @@ FastMCP registers a wrapper per tool. `get_tender_requirements` accepts only `te
 
 | Server | Used by | Purpose |
 | --- | --- | --- |
-| Tavily | Agent sub-agents | Verifying venue capacity, host availability, performer activity, claimed past events |
+| Tavily | Agent sub-agents | HTTP search behind `PageSearch`. An empty key returns no pages |
 | Gmail | Web process | Bid receipt, closure notice, winner and non-winner emails |
 
 Gmail is driven by the web process rather than the agent, so notifications are tied to committed commands.
@@ -380,7 +383,9 @@ All secrets in `.env` (`NFR-SEC-1`), which is gitignored.
 | `EMBEDDING_PROVIDER` | `openai` (default) or `ollama`; selects model and dimension |
 | `OLLAMA_BASE_URL` | Read only when the provider is `ollama`; defaults to `http://localhost:11434/v1` |
 | `EMBEDDING_MODEL`, `EMBEDDING_DIM` | Optional overrides for an unlisted model. Normally unset |
-| `TAVILY_API_KEY` | Via Tavily MCP |
+| `TAVILY_API_KEY` | Tavily HTTP search. Empty returns no pages |
+| `AGENT_MODEL_PROVIDER` | `openai` (default) or `ollama`. Chat only; embeddings stay on `EMBEDDING_PROVIDER` |
+| `AGENT_MODEL` | Optional chat-model override. Unset uses `gpt-4o-mini` or `qwen3:8b` |
 | `GMAIL_*` | Gmail MCP credentials |
 | `FLASK_SECRET_KEY` | Session signing |
 | `AGENT_POLL_SECONDS` | Default `60` |
