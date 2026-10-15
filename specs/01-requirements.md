@@ -139,7 +139,7 @@ Administrator role and supplier approval workflow; payment or contracting after 
 | `NFR-ES-3` *[8]* | Aggregate state is rebuilt by replaying its stream in `Version` order. |
 | `NFR-ES-4` *[8]* | Concurrent writes to one aggregate are rejected by `UNIQUE (StreamId, Version)`. |
 | `NFR-ES-5` *[8]* | The stream is a complete audit trail: every score, override and reveal is attributable and timestamped. |
-| `NFR-MCP-1` *[9]* | Web search is consumed through the Tavily MCP server. |
+| `NFR-MCP-1` *[9]* | Web search for verification is a Tavily HTTP client behind `PageSearch`. An empty or missing `TAVILY_API_KEY` returns no pages. |
 | `NFR-MCP-2` *[9]* | Email is sent through the Gmail MCP server. |
 | `NFR-TOOL-1` *[10]* | The project exposes exactly two of its own MCP tools, built with FastMCP: `get_tender_requirements` and `submit_requirement_score`. |
 | `NFR-AGT-1` *[11]* | The agent is a Deep Agent that plans and delegates to one sub-agent per requirement type. |

@@ -25,13 +25,13 @@ The agent has three channels, and the split is what makes price isolation struct
 
 | Channel | Direction | Carries |
 | --- | --- | --- |
-| `rm_bid_for_assessment` read model, via `pyodbc` | read | Work queue and bid content |
+| `rm_bid_for_assessment` read model, via `pyodbc` | read and claim | Work queue and bid content |
 | `get_tender_requirements` MCP tool | read | Requirements, weights, threshold flags, approved host list |
 | `submit_requirement_score` MCP tool | write | One `RequirementScored` event per call |
 
-`rm_bid_for_assessment` is a purpose-built projection containing `bid_id`, `tender_id`, `concept`, and the per-requirement responses. **It has no price column.** Price lives only in the `PriceOfferSealed` payload on the bid stream, which the agent never replays. So `NFR-AGT-4` holds because the data is absent from the agent's only source, not because the code declines to look — there is nothing to look at.
+`rm_bid_for_assessment` is a purpose-built projection containing `bid_id`, `tender_id`, `supplier_id`, `concept`, and the per-requirement responses. **It has no price column.** `enqueue_bid_for_assessment` writes those `BidSubmitted` fields only. Price lives only in the `PriceOfferSealed` payload on the bid stream, which the agent never replays. So `NFR-AGT-4` holds because the data is absent from the agent's only source, not because the code declines to look — there is nothing to look at.
 
-Writes go exclusively through `submit_requirement_score`. The agent never issues SQL writes and never appends to `Events` directly, which keeps project rule 1 intact.
+Requirement scores go through `submit_requirement_score`. `claim` updates the queue row in its own committed transaction. `QualityAssessmentCompleted` and `BidDisqualified` go through `CompleteAssessment`, which also sets that row to `completed`. The agent does not append to `Events` on its own.
 
 ---
 
@@ -44,7 +44,9 @@ Writes go exclusively through `submit_requirement_score`. The agent never issues
 
 "Evaluate Now" deliberately does not call the agent over HTTP. The web process stays unaware of the agent's existence, and the demo never waits on a timer.
 
-A bid is claimed before work begins so two poll cycles cannot double-process it. Combined with idempotency in §6, a crash mid-assessment is safe: the next cycle resumes at the first unscored requirement.
+A bid is claimed, and that claim is committed, before work begins, so two poll cycles cannot take the same bid (`T-AG-11`). A crash after the claim leaves the row `claimed`. `release_stalled_claims` returns that row to `pending` and clears `claimed_at` when `claimed_at` is strictly older than the given timeout (`T-AG-43`, `T-AG-44`). The caller commits. No setting and no poll calls it yet. Repeated API failure with no partial assessment, and resuming at the first unscored requirement, stay with `T-AG-9` and `T-AG-10`.
+
+`run_forever` in `agent/worker.py` is that poll (`T-AG-36`, `T-AG-37`, `T-AG-38`). It calls `run_once`. A return of 1 claims the next bid immediately. A return of 0 sleeps `AGENT_POLL_SECONDS` and polls again. SIGINT and SIGTERM, once `main` starts the loop, only set a flag that is checked before the next claim. The `run_once` already in progress finishes, including its terminal command. `python -m agent.runner` stays the entry point. `main(["--once"])` calls `run_once` once and returns (`T-AG-41`). With no flag, `main` calls `run_forever` at `settings.agent_poll_seconds`, with `time.sleep`, and a stop flag set by SIGINT or SIGTERM (`T-AG-42`). `build_runtime(settings)` opens the claim connection, builds `SqlAssessmentQueue`, and gives `complete` its own `transaction()` around `SqlCompleteAssessmentHandler`. Rubrics and evidence search are one `SemanticSearchService` over `ChromaVectorStore`. `web` is `TavilyPageSearch`: an empty `TAVILY_API_KEY` returns no pages (`T-AG-45`); a key posts the query to `https://api.tavily.com/search` and returns each hit's `url`, `title`, and `content` (`T-AG-46`). The five model ports are one `StructuredAssessor`. `AGENT_MODEL_PROVIDER` selects OpenAI `gpt-4o-mini` or Ollama `qwen3:8b` (`T-AG-53`). Each `assess_*` call sends the material at temperature 0 and parses that type's assessment (`T-AG-47` through `T-AG-51`). `assess` dispatches on the material type (`T-AG-52`). The evaluator still pins the band. Omitted `requirements` and `submit` are `get_tender_requirements` over `SqlTenderRequirementsQuery` and `submit_requirement_score` around `SqlScoreRequirementHandler` (`T-AG-55`). Passed-in callables are kept (`T-AG-54`).
 
 ---
 
@@ -77,6 +79,10 @@ Orchestrator
 
 Step 7 is arithmetic in `app/domain/scoring.py`, not a model call (`NFR-DET-1`).
 
+`score_bid` in `agent/orchestrator.py` is steps 2–5 for `VENUE`, `CONTENT`, `HOST`, `MUSIC`, and `EXPERIENCE`, and the threshold stop in step 6 (`T-AG-20`, `T-AG-8`, `T-AG-35`). Answers are a map from requirement id to response text. `supplier_id` is an argument, because `evaluate_experience` scopes `search_portfolios` to one supplier and `rm_bid_for_assessment` does not carry it yet. The function calls `get_tender_requirements` and `submit_requirement_score` through the same Python functions the MCP tools wrap. It walks the requirement list in order, loads each rubric whole, and dispatches `evaluate_venue`, `evaluate_content`, `evaluate_host`, `evaluate_music`, or `evaluate_experience`. `approved_hosts` is read from that payload and passed only to `evaluate_host`. A `HOST` requirement whose payload has no `approved_hosts` raises `ValueError` before any score is submitted. An empty list is a real list. A type outside those five raises `ValueError` before any score is submitted. A threshold requirement scoring below 6 is submitted, and later requirements are not dispatched.
+
+`run_once` in `agent/runner.py` is the poll cycle (`T-AG-27`, `T-AG-28`, `T-AG-29`). It claims one `AssessmentWork` from the queue — `bid_id`, `tender_id`, `supplier_id`, and the answers, with no price — calls `score_bid`, then `CompleteAssessment`. A second claim in the same cycle is not taken; the next `run_once` claims nothing when the queue is empty. When a submitted threshold score is below 6, the command is `BidDisqualified` with `reason` `threshold` and `failed_requirement_id`, and `quality_score` is absent. Otherwise quality is `quality` in `app/domain/scoring.py`. Quality below 60 emits `BidDisqualified` with `reason` `quality_floor` and `quality_score`, and `failed_requirement_id` is absent. Quality of 60 or more emits `QualityAssessmentCompleted` with `quality_score` and `requirement_scores`. Resume-after-crash stays later (`T-AG-10`). `SqlCompleteAssessmentHandler` appends the terminal event and projects the assessment read models (`T-CMD-13`, `T-CMD-14`). Ranking stays in the web `RevealPrices` handler.
+
 ---
 
 ## 5. Sub-agents
@@ -86,7 +92,7 @@ Each receives the requirement, the supplier's answer, and the rubric; each retur
 | Sub-agent | Vector collections | Tavily verification |
 | --- | --- | --- |
 | `VENUE` | `regulations` | Official capacity of the named venue; licensing and accessibility obligations at that capacity |
-| `CONTENT` | `rubrics`, `bid_concepts` | Whether named performers and works are active and real |
+| `CONTENT` | `bid_concepts` | Whether named performers and works are active and real |
 | `HOST` | — | Conflicting engagements for the host on the event date |
 | `MUSIC` | `bid_concepts` | Whether named acts are touring or active |
 | `EXPERIENCE` | `portfolios` | Corroboration of claimed past productions; reviews and press reports |
@@ -101,17 +107,86 @@ Three checks in one score, per `00-overview.md` §6:
 
 A safety or licensing shortfall caps the score in the 0–4 band regardless of how well the venue reads, because a non-compliant venue cannot host the event. Folding this in is what let `SAFETY` and `CAPACITY` be dropped as separate types without orphaning the regulations knowledge base.
 
+`evaluate_venue` in `agent/subagents/venue.py` is that sub-agent:
+
+```python
+evaluate_venue(requirement, answer, rubric, tender, search, web, model) -> RequirementVerdict
+```
+
+The orchestrator passes the requirement, the supplier's answer, the whole rubric, and tender context (`name`, `event_date`, `region`). `search` is `SemanticSearchService`. `web` is a search port. `model` proposes the integer at temperature 0 and reports three findings: `capacity_claim` (`verified`, `disproved`, or `inconclusive`), `meets_tender_capacity`, and `regulation_breached`. The function applies `knowledge_base/rubrics/venue.md`'s first-match rule before it returns the §6 verdict: a disproved capacity claim scores 0; a breached retrieved obligation pins the proposal to 0–4; verified capacity below the tender figure, with no breach, pins it to 3–4; an inconclusive claim pins it to 5–6; verified capacity that meets the tender, with no breach, pins it to 7–10. Inside a band, the model's integer is kept. A proposal that is not a real `int` in 0–10 is rejected. That adjustment is the rubric constraint on this one score. Quality, price, and rank stay in `app/domain/scoring.py`.
+
 ### `HOST`
 
-The approved host list arrives inside `get_tender_requirements`, so no third tool is needed. A host absent from the list fails the requirement outright — score 0 — since approval is categorical, not a matter of degree. A listed host with a same-date conflict found via Tavily scores in the 3–4 band: approved, but likely unavailable.
+The approved host list arrives inside `get_tender_requirements`, so no third tool is needed. Membership is a comparison in `evaluate_host`, not a model opinion: both the extracted name and each list entry are `strip().casefold()`-ed, and equality is exact. A named host absent from the list scores in the 1–2 band. Score 0 is reserved for a requirement where no host was proposed. A listed host with a same-date conflict found via Tavily scores in the 3–4 band: approved, but likely unavailable.
 
-### `CONTENT` and `MUSIC`
+`evaluate_host` in `agent/subagents/host.py` is that sub-agent:
 
-Comparative rather than factual. Both retrieve past winning concepts from `bid_concepts` so the rubric is applied against precedent instead of the model's taste. Both verify that named performers exist and are active; a fabricated performer scores 0 per §2 of `04-scoring-model.md`.
+```python
+evaluate_host(requirement, answer, rubric, tender, approved_hosts, web, model) -> RequirementVerdict
+```
+
+The caller passes the requirement, the supplier's answer, the whole rubric, tender context (`name`, `event_date`, `region`), and `approved_hosts`. There is no vector search. `web` is a search port for same-date engagements. `model` proposes the integer at temperature 0 and reports four findings: `host_name`, `backup_name`, `primary_conflict`, and `backup_conflict`. The function applies `knowledge_base/rubrics/host.md`'s first-match rule before it returns the §6 verdict. The bands this function pins are:
+
+1. No host name after `strip` → score 0.
+2. A named host whose normalized name is not in `approved_hosts` → the proposal is pinned to 1–2.
+3. The primary host is listed and `primary_conflict` → the proposal is pinned to 3–4.
+4. The primary host is listed, the backup's normalized name is listed, and `backup_conflict` is false → the proposal is pinned to 9–10.
+
+Rule 4 does not repeat "no conflict". Rule 3 is first, so a listed backup does not lift a conflicted primary into 9–10. A proposal that is not a real `int` in 0–10 is rejected. Any other finding combination is rejected: the 5–6 and 7–8 bands stay in the rubric until a later slice. That adjustment is the rubric constraint on this one score. Quality, price, and rank stay in `app/domain/scoring.py`.
+
+### `CONTENT`
+
+Comparative rather than factual. Past concepts come from `bid_concepts` so the rubric is applied against precedent instead of the model's taste. Named performers and works are checked for being active and real; a fabricated performer, work, or segment scores 0 per §2 of `04-scoring-model.md`.
+
+`evaluate_content` in `agent/subagents/content.py` is that sub-agent:
+
+```python
+evaluate_content(requirement, answer, rubric, tender, search, web, model) -> RequirementVerdict
+```
+
+The caller passes the requirement, the supplier's answer, the whole rubric, and tender context (`name`, `event_date`, `region`). `search` is `SemanticSearchService`. `search_bids` is called with no `tender_id`, so precedent is taken from `bid_concepts` across tenders. `web` is a search port. `model` proposes the integer at temperature 0 and reports three findings: `performer_claim` (`verified`, `disproved`, or `inconclusive`), `both_components_sound`, and `substantive_defect`. The function applies `knowledge_base/rubrics/content.md`'s first-match rule before it returns the §6 verdict. The bands this function pins are:
+
+1. `performer_claim == "disproved"` → score 0.
+2. `both_components_sound` and `performer_claim == "verified"` → the proposal is pinned to 9–10.
+3. `substantive_defect` → the proposal is pinned to 3–4.
+
+`both_components_sound` means the schedule and the concept are both present and relevant to the event. `substantive_defect` means the answer addresses content, but a present component is defective in the way the rubric's 3–4 band describes — a self-contradictory schedule beside a relevant concept, for example. A proposal that is not a real `int` in 0–10 is rejected. Any other finding combination is rejected: the 7–8, 5–6, and 1–2 bands stay in the rubric until a later slice. That adjustment is the rubric constraint on this one score. Quality, price, and rank stay in `app/domain/scoring.py`.
+
+### `MUSIC`
+
+Comparative rather than factual. Past winning concepts come from `bid_concepts` so the rubric is applied against precedent instead of the model's taste. Named acts are checked for being on tour or active; a fabricated act scores 0 per §2 of `04-scoring-model.md`.
+
+`evaluate_music` in `agent/subagents/music.py` is that sub-agent:
+
+```python
+evaluate_music(requirement, answer, rubric, tender, search, web, model) -> RequirementVerdict
+```
+
+The caller passes the requirement, the supplier's answer, the whole rubric, and tender context (`name`, `event_date`, `region`). `search` is `SemanticSearchService`. `search_bids` is called with no `tender_id`, so precedent is taken from `bid_concepts` across tenders. `web` is a search port. `model` proposes the integer at temperature 0 and reports four findings: `act_claim` (`verified`, `disproved`, or `inconclusive`), `live_offered`, `tender_requires_live`, and `rider_complete`. `rider_complete` means the technical rider covers stage, amplification, and power. The function applies `knowledge_base/rubrics/music.md`'s first-match rule before it returns the §6 verdict. The bands this function pins are:
+
+1. `act_claim == "disproved"` → score 0.
+2. `tender_requires_live` and not `live_offered` → the proposal is pinned to 3–4.
+3. `act_claim == "verified"` and `rider_complete` and (`live_offered` or not `tender_requires_live`) → the proposal is pinned to 9–10.
+
+Rule 3 requires a verified act, so a disproved act does not match it. Rule 1 is still first. A proposal that is not a real `int` in 0–10 is rejected. Any other finding combination is rejected: the 7–8, 5–6, and 1–2 bands stay in the rubric until a later slice. That adjustment is the rubric constraint on this one score. Quality, price, and rank stay in `app/domain/scoring.py`.
 
 ### `EXPERIENCE`
 
-Verifies each claimed production. The rubric keys off how many claims were corroborated, so an unverifiable claim and a disproved claim land differently — inconclusive reduces the score, disproved sets 0.
+Verifies each claimed production against the supplier's own portfolio and against reviews or reports. The rubric keys off how many outdoor or stadium productions were corroborated. One disproved production scores 0 even when others were verified (`knowledge_base/rubrics/experience.md`).
+
+`evaluate_experience` in `agent/subagents/experience.py` is that sub-agent:
+
+```python
+evaluate_experience(requirement, answer, rubric, tender, supplier_id, search, web, model) -> RequirementVerdict
+```
+
+The caller passes the requirement, the supplier's answer, the whole rubric, tender context (`name`, `event_date`, `region`), and `supplier_id`. `search` is the portfolio port. `search_portfolios(query, supplier_id)` returns only that supplier's past work; `SemanticSearchService` does not implement the method yet (`02` §6). `web` is a search port. `model` proposes the integer at temperature 0 and reports three findings: `any_disproved`, `verified_outdoor_count`, and `outdoor_claimed`. The function applies the rubric's first-match rule before it returns the §6 verdict. The bands this function pins are:
+
+1. `any_disproved` → score 0.
+2. `verified_outdoor_count >= 3` → the proposal is pinned to 9–10.
+3. `outdoor_claimed` and `verified_outdoor_count == 0` → the proposal is pinned to 5–6.
+
+`verified_outdoor_count` is how many claimed outdoor or stadium productions were independently verified. `outdoor_claimed` means the answer claims at least one. Rule 1 is first, so three verified outdoor shows plus one disproved production still score 0. A proposal that is not a real `int` in 0–10 is rejected, as is a `verified_outdoor_count` that is not a real `int`. Any other finding combination is rejected: the 7–8, 3–4, and 1–2 bands stay in the rubric until a later slice. That adjustment is the rubric constraint on this one score. Quality, price, and rank stay in `app/domain/scoring.py`.
 
 ---
 

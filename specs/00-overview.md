@@ -172,10 +172,10 @@ Flask application, organized per MVC and CQRS, persisting to a cloud database vi
 | Vector store | Chroma in **server mode**, `chroma run --path ./chroma-data --port 8000` | `chromadb==1.5.9`, started by `scripts/run_chroma.ps1`. Both Flask and the agent connect via `HttpClient`; embedded mode is unsafe across processes. All collections use cosine distance |
 | Embeddings | OpenAI `text-embedding-3-small` (1536 dims) **or** local Ollama `qwen3-embedding:0.6b` (1024 dims), chosen by `EMBEDDING_PROVIDER` | `openai==3.26.1`. Both are multilingual, so Hebrew bid text is indexed natively; an English-only model is never acceptable. Computed in the application process, never by the Chroma server. Switching provider requires re-seeding, and the store enforces it |
 | Outbound TLS | `truststore.inject_into_ssl()` at process start | **Mandatory.** Without it the OpenAI API is unreachable on this network — see §13 |
-| LLM | OpenAI, structured outputs / JSON schema | For repeatable rubric scoring |
+| LLM | OpenAI `gpt-4o-mini` or Ollama `qwen3:8b`, chosen by `AGENT_MODEL_PROVIDER` | Structured JSON at temperature 0. Independent of `EMBEDDING_PROVIDER` |
 | Agent framework | `deepagents` (LangGraph), independent background process | One sub-agent per requirement type |
 | Own MCP tools | FastMCP / MCP SDK | Two tools; see below |
-| External MCP | Tavily, Gmail | |
+| External MCP | Gmail | Tavily is an HTTP client behind `PageSearch`, not an MCP server |
 | Python | 3.13 in `.venv` | |
 
 ### Commands
@@ -242,8 +242,8 @@ Semantic search enables queries such as *"find bids that include a tribute segme
 
 ### External MCP services
 
-- **Tavily** — web search for the agent's verification work.
-- **Gmail** — bid receipt confirmation to the supplier, tender closure notice, and winner/non-winner notifications.
+- **Tavily** — HTTP web search for the agent's verification work. An empty `TAVILY_API_KEY` returns no pages.
+- **Gmail** — bid receipt confirmation to the supplier, tender closure notice, and winner/non-winner notifications. Gmail stays an MCP server.
 
 ### Own MCP tools
 
@@ -252,7 +252,7 @@ Semantic search enables queries such as *"find bids that include a tribute segme
 | `get_tender_requirements(tender_id)` | Returns requirements, weights and threshold flags to the agent. For `HOST` requirements it also returns the approved host list, read from a seeded reference table — this is why no third tool is needed |
 | `submit_requirement_score(bid_id, requirement_id, score, justification, sources, rubric_version)` | Persists a requirement score as an event |
 
-Scope is fixed at **two** own tools. The optional third tool `check_host_list(name)` is **dropped**, which leaves the `HOST` sub-agent without a way to verify the approved list — see §13.
+Scope is fixed at **two** own tools. The optional third tool `check_host_list(name)` is **dropped**. The approved list arrives inside `get_tender_requirements`, and `evaluate_host` checks membership itself (§13).
 
 ---
 
@@ -275,7 +275,7 @@ Scope is fixed at **two** own tools. The optional third tool `check_host_list(na
 | 6. Vector database | Bid content, supplier portfolios and knowledge base — see §7 |
 | 7. CQRS | Commands and queries as listed in §7, queries served from dedicated read models |
 | 8. Event Sourcing | Event stream as listed in §7; auditability is a real business requirement here |
-| 9. External MCP | Tavily and Gmail |
+| 9. External MCP | Gmail MCP. Tavily is HTTP (`NFR-MCP-1`) |
 | 10. Own tools | `get_tender_requirements`, `submit_requirement_score`, optional `check_host_list` |
 | 11. Deep Agent | One sub-agent per requirement type |
 

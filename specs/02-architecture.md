@@ -32,7 +32,7 @@ Three processes run side by side. Keeping them separate is what satisfies *[5]*,
 │  Agent process       │  + rm_bid_for_     │
 │  deepagents          │    assessment      │
 │  5 sub-agents        │ ───────────────────┘
-└───────┬──────────────┘ ──▶ Tavily MCP (web search)
+└───────┬──────────────┘ ──▶ Tavily HTTP (web search)
         │ HttpClient
         ▼
 ┌──────────────────────┐
@@ -42,7 +42,7 @@ Three processes run side by side. Keeping them separate is what satisfies *[5]*,
 Gmail MCP (notifications) ◀── Web process only
 ```
 
-The agent never connects to the web process. It reads its work queue and bid content from one purpose-built read model, `rm_bid_for_assessment`, and otherwise touches domain state only through the two MCP tools in §7. That read model **has no price column**, so `NFR-AGT-4` holds structurally: the price is absent from the agent's only source of bid data rather than merely unread. Writes go solely through `submit_requirement_score`.
+The agent never connects to the web process. It reads its work queue and bid content from one purpose-built read model, `rm_bid_for_assessment`, and otherwise touches domain state only through the two MCP tools in §7 and the in-process `CompleteAssessment` command. That read model **has no price column**, so `NFR-AGT-4` holds structurally: the price is absent from the agent's only source of bid data rather than merely unread. Requirement scores go solely through `submit_requirement_score`. `BidDisqualified` and `QualityAssessmentCompleted` go through `CompleteAssessment`, which is not an MCP tool. Claiming a bid is an operational take on the assessment queue, not a domain event.
 
 Gmail is driven by the web process, not the agent, so notifications are tied to committed commands.
 
@@ -109,9 +109,13 @@ app/
   templates/base.html         # Hebrew RTL shell
   static/css/app.css
 agent/
-  runner.py                   # poll loop + Evaluate Now consumer
+  runner.py                   # python -m agent.runner; starts run_forever once the queue exists
+  worker.py                   # run_forever: drain, idle sleep, stop flag
   orchestrator.py             # Phase 4: Deep Agent planner
   subagents/                  # Phase 4: one per requirement type
+  adapters/
+    tavily.py                 # PageSearch over Tavily HTTP
+    assessor.py               # one chat client, five assessment schemas
 mcp_server/
   server.py                   # the two own FastMCP tools
   __main__.py                 # python -m mcp_server (stdio)
@@ -157,7 +161,11 @@ Steps 3 and 4 share one transaction, so a read model can never reflect an event 
 
 `PublishTender` · `AddRequirement` · `SubmitBid` · `WithdrawBid` · `CloseTender` · `ScoreRequirement` · `RevealPrices` · `OverrideScore` · `SelectWinner` · `CancelTender`
 
-`ScoreRequirement` is issued by the agent through `submit_requirement_score`; the rest originate from the UI. `RevealPrices` is issued by the web process only — never the agent.
+`ScoreRequirement` is issued by the agent through `submit_requirement_score`; the rest originate from the UI. `RevealPrices` is issued by the web process only — never the agent. `SqlScoreRequirementHandler` appends `RequirementScored` on the bid stream and inserts one `rm_requirement_score` row in that same transaction (`T-CMD-20`). Weight is copied from `rm_requirement`. A second command for the same `(bid_id, requirement_id)` appends nothing and returns the stored version (`T-AG-4`). The handler rejects a bid with no `BidSubmitted`, a tender with no `TenderClosedForBids` (`T-INV-2`), and a tender that has `PricesRevealed`, `TenderFailed`, or `TenderCancelled` (`T-INV-4`). It does not read `price_amount`.
+
+`CompleteAssessment` is the in-process command behind `run_once`. Its SQL handler appends `QualityAssessmentCompleted` or `BidDisqualified` on the bid stream and, in that same transaction, projects `rm_bid_assessment`. A qualified completion inserts one `rm_requirement_score` row per requirement in the payload only when that `(bid_id, requirement_id)` is absent (`T-CMD-13`, `T-CMD-21`). An intermediate score already stored by `SqlScoreRequirementHandler` is left as it is. The handler does not read `PriceOfferSealed`. A bid stream that already has either terminal event rejects a second completion (`T-CMD-15`).
+
+`RevealPrices` replays the tender stream and every bid stream whose `BidSubmitted` names that tender. A bid that is not `QualityAssessmentCompleted` or `BidDisqualified` rejects the command and appends nothing (`INV-3`, `T-CMD-16`). When at least one bid is qualified, the handler loads `alpha` from `TenderCreated`, each qualified bid's `price_amount` from `PriceOfferSealed`, and `submitted_at` from `BidSubmitted.created_at`, calls `rank_bids`, and appends `PricesRevealed` then `FinalRankingCalculated`. It projects `rm_bid_ranking` for those qualified bids only. When every bid is terminal and none is qualified, it appends `TenderFailed` with `reason` `no_qualified_bids` and does not append `PricesRevealed` (`T-CMD-18`).
 
 ---
 
@@ -182,9 +190,33 @@ A query handler that opens the events table is a defect (`NFR-CQRS-2`).
 
 `rm_dashboard` holds bid counts and status per tender so `FR-DASH-5` holds. Deadline countdowns are rendered client-side from the stored deadline; the server stores no ticking value.
 
-One further projection serves no query: `rm_bid_for_assessment` is the agent's work queue and bid-content source (`05-agent-spec.md` §2). It carries `bid_id`, `tender_id`, `concept` and the per-requirement responses, and deliberately **omits price**.
+These read models have columns now (`T-CMD-13` … `T-CMD-18`, `T-QRY-1`):
 
-`GetTenderRequirements` is the read behind the MCP tool in §7. It is separate from `GetTenderDetails`, because that UI query may later carry bids and this one must not be able to. The handler returns `{tender, requirements, approved_hosts}`, or nothing when the tender is absent. The protocol is `app/queries/tender_requirements.py`. Its SQL handler arrives with the projections; until then the tool is exercised against an in-memory query.
+| Table | Columns |
+| --- | --- |
+| `dbo.rm_bid_assessment` | `bid_id`, `tender_id`, `status`, `quality_score`, `reason`, `failed_requirement_id` |
+| `dbo.rm_requirement_score` | `bid_id`, `requirement_id`, `score`, `weight` |
+| `dbo.rm_bid_ranking` | `tender_id`, `bid_id`, `quality`, `price_amount`, `price_score`, `final_score`, `rank` |
+| `dbo.rm_tender_detail` | `tender_id`, `name`, `event_type`, `event_date`, `region`, `alpha` |
+| `dbo.rm_requirement` | `tender_id`, `requirement_id`, `position`, `type`, `weight`, `is_threshold`, `description` |
+| `dbo.approved_hosts` | `name` |
+
+`position` is the order of `RequirementAdded` on the tender stream. `approved_hosts` is the seeded reference list, one row per name, shared by every tender. `PublishTender` is the writer for the two tender tables; that command is a later slice. `GetTenderRequirements` reads the rows that are already there.
+
+`status` is `qualified` or `disqualified`. `tender_id` is taken from `BidSubmitted` when that event is already on the bid stream. A threshold disqualification leaves `quality_score` null and writes no requirement rows. `rm_bid_ranking` has no row for a disqualified bid.
+
+One further projection serves no query: `rm_bid_for_assessment` is the agent's work queue and bid-content source (`05-agent-spec.md` §2). `enqueue_bid_for_assessment` inserts one `pending` row from `BidSubmitted` fields only. `SqlAssessmentQueue.claim` takes the oldest `pending` row, sets `claimed`, and commits before it returns. `release_stalled_claims(conn, timeout_seconds)` sets `status` back to `pending` and `claimed_at` to null where `status` is `claimed` and `claimed_at` is strictly earlier than `SYSUTCDATETIME()` minus `timeout_seconds` (`T-AG-43`). A claim inside that window stays `claimed` (`T-AG-44`). The caller commits. The function does not read or write `RequirementScored`, and nothing calls it yet. `SqlCompleteAssessmentHandler` sets that row to `completed` in the same transaction as the terminal event; zero rows updated is success. Columns:
+
+| Column | Notes |
+| --- | --- |
+| `bid_id` | Primary key |
+| `tender_id`, `supplier_id`, `concept` | Copied from `BidSubmitted` |
+| `responses_json` | The `BidSubmitted` response list. No price |
+| `status` | `pending`, `claimed`, or `completed` |
+| `queued_at` | Default `SYSUTCDATETIME()`; claim order |
+| `claimed_at` | Null until claim; null again when a stalled claim is released |
+
+`GetTenderRequirements` is the read behind the MCP tool in §7. It is separate from `GetTenderDetails`, because that UI query may later carry bids and this one must not be able to. The handler returns `{tender, requirements, approved_hosts}`, or nothing when the tender is absent. `tender.type` is `event_type`. Requirements come back in `position` order. `approved_hosts` is every name in the reference table, ordered by name. The protocol is `app/queries/tender_requirements.py`. `SqlTenderRequirementsQuery.fetch` reads only those three tables (`T-QRY-1`, `NFR-CQRS-2`). The MCP tool's own tests still pass an in-memory query.
 
 ---
 
@@ -270,7 +302,9 @@ class SemanticSearchService:
 
 `search_regulations` queries `regulations`.
 
-Both return hits `{id, text, metadata, score}` in the store's order (closest first). `score` is cosine similarity, `1 - distance`, where `distance` is the cosine distance the collections are created with. Higher is closer.
+`search_portfolios(query, supplier_id, top_k=5)` is the portfolio port `evaluate_experience` calls (`05` §5, `T-AG-24`). It will query `portfolios` with the filter `{"supplier_id": supplier_id}` applied before neighbours are chosen, and return the same hit shape. `SemanticSearchService` does not implement it yet.
+
+`search_bids` and `search_regulations` return hits `{id, text, metadata, score}` in the store's order (closest first). `score` is cosine similarity, `1 - distance`, where `distance` is the cosine distance the collections are created with. Higher is closer.
 
 `get_rubric` uppercases the requirement type and loads `rubric:{TYPE}` through `get`, one whole document (`NFR-VEC-3`, `T-VEC-3`). The type taxonomy is the closed set `VENUE`, `CONTENT`, `HOST`, `MUSIC`, `EXPERIENCE`; any other value raises `ValueError`. A known type with nothing stored returns `None`. The result is `{id, text, metadata}` — a key lookup has no score.
 
@@ -327,7 +361,7 @@ submit_requirement_score(
 
 FastMCP registers a wrapper per tool. `get_tender_requirements` accepts only `tender_id`, and `submit_requirement_score` accepts `bid_id`, `requirement_id`, `score`, `justification`, `sources`, and `rubric_version`. The query and the command handler stay out of the tool schema. `python -m mcp_server` starts the server on stdio. `bootstrap.init()` is the first statement in `mcp_server/server.py`, and the FastMCP import follows it.
 
-`submit_requirement_score(bid_id, requirement_id, score, justification, sources, rubric_version, handler)` validates the arguments, then dispatches a `ScoreRequirement` command. `rubric_version` is an argument because every `RequirementScored` records it (`03-domain-events.md` §2) and this tool is the only writer; §7 previously omitted it. `tender_id` is not an argument: `BidSubmitted` already stores it, and the handler reads it from the bid stream. `scored_by` is stamped `"agent"`. `sources` stays, because `FR-EVAL-2` and `FR-DET-2` render them; an empty list is accepted here, and `T-AG-7` remains the orchestrator's check against `verifications`. A score must be a real `int` in `0..10` (`T-AG-5`, `T-AG-6`); `bool` is rejected. Blank `bid_id`, `requirement_id`, `justification`, or `rubric_version`, and a blank source entry, raise `ValueError` before the handler runs. The handler's `ScoringRejected` propagates unchanged. Idempotency on `(bid_id, requirement_id)` and `INV-2` / `INV-4` belong to the handler, which is not built yet.
+`submit_requirement_score(bid_id, requirement_id, score, justification, sources, rubric_version, handler)` validates the arguments, then dispatches a `ScoreRequirement` command. `rubric_version` is an argument because every `RequirementScored` records it (`03-domain-events.md` §2) and this tool is the only writer; §7 previously omitted it. `tender_id` is not an argument: `BidSubmitted` already stores it, and the handler reads it from the bid stream. `scored_by` is stamped `"agent"`. `sources` stays, because `FR-EVAL-2` and `FR-DET-2` render them; an empty list is accepted here, and `T-AG-7` remains the orchestrator's check against `verifications`. A score must be a real `int` in `0..10` (`T-AG-5`, `T-AG-6`); `bool` is rejected. Blank `bid_id`, `requirement_id`, `justification`, or `rubric_version`, and a blank source entry, raise `ValueError` before the handler runs. The handler's `ScoringRejected` propagates unchanged. Idempotency on `(bid_id, requirement_id)` and `INV-2` / `INV-4` belong to `SqlScoreRequirementHandler` (`T-AG-4`, `T-INV-2`, `T-INV-4`). The tool opens one `transaction()` around that handler.
 
 ---
 
@@ -335,7 +369,7 @@ FastMCP registers a wrapper per tool. `get_tender_requirements` accepts only `te
 
 | Server | Used by | Purpose |
 | --- | --- | --- |
-| Tavily | Agent sub-agents | Verifying venue capacity, host availability, performer activity, claimed past events |
+| Tavily | Agent sub-agents | HTTP search behind `PageSearch`. An empty key returns no pages |
 | Gmail | Web process | Bid receipt, closure notice, winner and non-winner emails |
 
 Gmail is driven by the web process rather than the agent, so notifications are tied to committed commands.
@@ -354,7 +388,9 @@ All secrets in `.env` (`NFR-SEC-1`), which is gitignored.
 | `EMBEDDING_PROVIDER` | `openai` (default) or `ollama`; selects model and dimension |
 | `OLLAMA_BASE_URL` | Read only when the provider is `ollama`; defaults to `http://localhost:11434/v1` |
 | `EMBEDDING_MODEL`, `EMBEDDING_DIM` | Optional overrides for an unlisted model. Normally unset |
-| `TAVILY_API_KEY` | Via Tavily MCP |
+| `TAVILY_API_KEY` | Tavily HTTP search. Empty returns no pages |
+| `AGENT_MODEL_PROVIDER` | `openai` (default) or `ollama`. Chat only; embeddings stay on `EMBEDDING_PROVIDER` |
+| `AGENT_MODEL` | Optional chat-model override. Unset uses `gpt-4o-mini` or `qwen3:8b` |
 | `GMAIL_*` | Gmail MCP credentials |
 | `FLASK_SECRET_KEY` | Session signing |
 | `AGENT_POLL_SECONDS` | Default `60` |

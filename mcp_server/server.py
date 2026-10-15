@@ -17,6 +17,7 @@ from app.commands.score_requirement import (  # noqa: E402
     ScoreRequirementHandler,
     SqlScoreRequirementHandler,
 )
+from app.events.db import transaction  # noqa: E402
 from app.queries.tender_requirements import (  # noqa: E402
     SqlTenderRequirementsQuery,
     TenderRequirementsQuery,
@@ -129,12 +130,13 @@ def submit_requirement_score_tool(
 
     sources may be empty. The handler stamps scored_by as agent.
     """
-    return submit_requirement_score(
-        bid_id,
-        requirement_id,
-        score,
-        justification,
-        sources,
-        rubric_version,
-        SqlScoreRequirementHandler(),
-    )
+    with transaction() as conn:
+        return submit_requirement_score(
+            bid_id,
+            requirement_id,
+            score,
+            justification,
+            sources,
+            rubric_version,
+            SqlScoreRequirementHandler(conn),
+        )

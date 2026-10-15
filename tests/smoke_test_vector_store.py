@@ -75,8 +75,8 @@ def _store(*, embeddings: bool = False) -> ChromaVectorStore:
             f"embed locally."
         )
 
-    store = ChromaVectorStore(settings)
     try:
+        store = ChromaVectorStore(settings)
         store.heartbeat()
     except Exception as exc:  # chromadb raises several unrelated types here
         pytest.skip(
