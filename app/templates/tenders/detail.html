@@ -23,6 +23,14 @@
   <dd class="col-sm-9"><span class="ltr-numeric" id="bid-count">{{ bid_count }}</span></dd>
   {% endif %}
 </dl>
+{% if can_close %}
+<form method="post" action="{{ url_for('comparison.close', tender_id=details.tender.tender_id) }}" class="mb-3">
+  <button type="submit" class="btn btn-outline-danger">סגירה להצעות</button>
+</form>
+{% endif %}
+{% if show_comparison %}
+<p><a href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id) }}">טבלת השוואה</a></p>
+{% endif %}
 
 <h2 class="h5">קריטריוני הערכה</h2>
 <p class="text-muted">ציון האיכות הוא סכום משוקלל של הדרישות. סכום המשקלות במכרז שפורסם הוא 100%.</p>

@@ -38,10 +38,19 @@ class SubmitBid:
     responses: tuple[BidResponse, ...]
     price_amount: int
     supplier_email: str = ""
+    supplier_display_name: str = ""
     currency: str = CURRENCY
 
 
-def submit_bid(store, bids, command: SubmitBid, *, now: datetime | None = None, notifier=None) -> str:
+def submit_bid(
+    store,
+    bids,
+    command: SubmitBid,
+    *,
+    now: datetime | None = None,
+    notifier=None,
+    tenders=None,
+) -> str:
     clock = _utc(now)
     tender = replay_tender(store.read_stream(command.tender_id))
     if not tender.tender_id:
@@ -81,7 +90,10 @@ def submit_bid(store, bids, command: SubmitBid, *, now: datetime | None = None, 
         submitted,
         tender_name=tender.name,
         submitted_at=clock,
+        supplier_name=command.supplier_display_name,
     )
+    if tenders is not None:
+        tenders.increment_bid_count(command.tender_id)
     if notifier is not None:
         receipt = make_receipt(
             to_email=command.supplier_email,

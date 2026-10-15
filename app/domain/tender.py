@@ -15,8 +15,12 @@ from app.domain.user import DomainError, UnknownEventTypeError
 from app.events.event_store import StoredEvent
 from app.events.event_types import (
     REQUIREMENT_ADDED,
+    TENDER_CLOSED_FOR_BIDS,
     TENDER_CREATED,
+    TENDER_FAILED,
     TENDER_PUBLISHED,
+    FINAL_RANKING_CALCULATED,
+    PRICES_REVEALED,
 )
 
 CULTURE = "culture"
@@ -32,6 +36,10 @@ REQUIREMENT_TYPES = frozenset({VENUE, CONTENT, HOST, MUSIC, EXPERIENCE})
 
 DRAFT = "draft"
 OPEN = "open"
+UNDER_EVALUATION = "under_evaluation"
+DECIDED = "decided"
+FAILED = "failed"
+CANCELLED = "cancelled"
 
 CURRENCY = "ILS"
 
@@ -86,6 +94,22 @@ class NotTenderOwnerError(DomainError):
     pass
 
 
+class TenderNotClosableError(DomainError):
+    pass
+
+
+class TenderAlreadyClosedError(DomainError):
+    pass
+
+
+class DeadlineStillOpenError(DomainError):
+    pass
+
+
+class BidsNotAssessedError(DomainError):
+    pass
+
+
 class IllegalEventOrderError(DomainError):
     pass
 
@@ -113,6 +137,9 @@ class TenderState:
     organizer_id: str
     requirements: tuple[RequirementState, ...]
     published_at: datetime | None = None
+    closed_at: datetime | None = None
+    failed_at: datetime | None = None
+    prices_revealed: bool = False
 
     @property
     def weight_total(self) -> int:
@@ -122,6 +149,10 @@ class TenderState:
     def status(self) -> str:
         if not self.tender_id:
             return ""
+        if self.failed_at is not None:
+            return FAILED
+        if self.closed_at is not None:
+            return UNDER_EVALUATION
         if self.published_at is not None:
             return OPEN
         return DRAFT
@@ -219,6 +250,24 @@ def apply_tender(state: TenderState, event: StoredEvent) -> TenderState:
             requirements=state.requirements,
             published_at=published_at,
         )
+    if event.event_type == TENDER_CLOSED_FOR_BIDS:
+        if state.published_at is None:
+            raise IllegalEventOrderError("TenderClosedForBids before TenderPublished")
+        if state.closed_at is not None:
+            raise IllegalEventOrderError("TenderClosedForBids twice")
+        return _copy(state, closed_at=_parse_timestamp(event.event_data["closed_at"]))
+    if event.event_type == TENDER_FAILED:
+        if state.closed_at is None and state.published_at is None:
+            raise IllegalEventOrderError("TenderFailed before the tender was published")
+        return _copy(state, failed_at=_parse_timestamp(event.event_data["failed_at"]))
+    if event.event_type == PRICES_REVEALED:
+        if state.closed_at is None or state.failed_at is not None or state.prices_revealed:
+            raise IllegalEventOrderError("PricesRevealed is out of order")
+        return _copy(state, prices_revealed=True)
+    if event.event_type == FINAL_RANKING_CALCULATED:
+        if not state.prices_revealed:
+            raise IllegalEventOrderError("FinalRankingCalculated before PricesRevealed")
+        return state
     raise UnknownEventTypeError(event.event_type)
 
 
@@ -280,6 +329,28 @@ def _apply_requirement(state: TenderState, event: StoredEvent) -> TenderState:
         requirements=state.requirements + (requirement,),
         published_at=state.published_at,
     )
+
+
+def _copy(state: TenderState, **changes) -> TenderState:
+    values = dict(
+        tender_id=state.tender_id,
+        name=state.name,
+        event_type=state.event_type,
+        event_date=state.event_date,
+        region=state.region,
+        budget_amount=state.budget_amount,
+        budget_currency=state.budget_currency,
+        deadline=state.deadline,
+        alpha=state.alpha,
+        organizer_id=state.organizer_id,
+        requirements=state.requirements,
+        published_at=state.published_at,
+        closed_at=state.closed_at,
+        failed_at=state.failed_at,
+        prices_revealed=state.prices_revealed,
+    )
+    values.update(changes)
+    return TenderState(**values)
 
 
 def _parse_timestamp(value: str) -> datetime:

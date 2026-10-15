@@ -10,16 +10,20 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, u
 from app.commands.add_requirement import AddRequirement, add_requirement
 from app.commands.publish_tender import PublishTender, RequirementSpec, publish_tender
 from app.domain.tender import (
+    CANCELLED,
     CONTENT,
     CULTURE,
+    DECIDED,
     DRAFT,
     EVENT_TYPES,
     EXPERIENCE,
+    FAILED,
     HOST,
     MUSIC,
     OPEN,
     REQUIREMENT_TYPES,
     SPORTS,
+    UNDER_EVALUATION,
     VENUE,
     DomainError,
     InvalidAlphaError,
@@ -56,6 +60,10 @@ REQUIREMENT_TYPE_LABELS = {
 STATUS_LABELS = {
     DRAFT: "טיוטה",
     OPEN: "פתוח להצעות",
+    UNDER_EVALUATION: "בהערכה",
+    DECIDED: "הוכרע",
+    FAILED: "נכשל",
+    CANCELLED: "בוטל",
 }
 
 _BLANK_ROW = {
@@ -104,6 +112,8 @@ def organizer_tender(tender_id: str):
         "tenders/detail.html",
         details=details,
         can_edit=details.tender.status == DRAFT,
+        can_close=details.tender.status == OPEN,
+        show_comparison=details.tender.status in {UNDER_EVALUATION, FAILED, DECIDED},
         bid_count=count,
         back_url=url_for("pages.organizer_home"),
         back_label="חזרה למכרזים שלי",

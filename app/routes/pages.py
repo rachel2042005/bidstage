@@ -6,9 +6,9 @@ from datetime import date
 
 from flask import Blueprint, render_template, request
 
-from app.domain.tender import DRAFT, EVENT_TYPES, OPEN
+from app.domain.tender import EVENT_TYPES, OPEN
 from app.domain.user import ORGANIZER, SUPPLIER
-from app.queries.get_bid import bid_count
+from app.queries.get_dashboard import Dashboard, get_dashboard
 from app.queries.search_tenders import search_tenders
 from app.routes.access import current_user_id, require_role
 from app.routes.services import unit_of_work
@@ -25,29 +25,14 @@ def home():
 @require_role(ORGANIZER)
 def organizer_home():
     keyword = request.args.get("q", "").strip()
-    status = request.args.get("status", "").strip()
-    if status not in {DRAFT, OPEN}:
-        status = ""
-    with unit_of_work() as (_store, _users, tenders, bids):
-        rows = search_tenders(
-            tenders,
-            organizer_id=current_user_id(),
-            status=status or None,
-            keyword=keyword or None,
-        )
-        counts = {row.tender_id: bid_count(bids, row.tender_id) for row in rows}
-    if keyword or status:
-        empty_message = "אין מכרזים התואמים לחיפוש."
-    else:
-        empty_message = "עדיין אין מכרזים. אפשר לפתוח טיוטה חדשה."
+    with unit_of_work() as (_store, _users, tenders, _bids):
+        dashboard = get_dashboard(tenders, current_user_id() or "")
+    if keyword:
+        dashboard = _filter_dashboard(dashboard, keyword)
     return render_template(
         "organizer/home.html",
-        tenders=rows,
-        detail_endpoint="tenders.organizer_tender",
-        show_status=True,
-        empty_message=empty_message,
-        filters={"q": keyword, "status": status},
-        bid_counts=counts,
+        dashboard=dashboard,
+        filters={"q": keyword},
     )
 
 
@@ -82,6 +67,22 @@ def supplier_home():
             "event_date_from": request.args.get("event_date_from", ""),
             "event_date_to": request.args.get("event_date_to", ""),
         },
+    )
+
+
+def _filter_dashboard(dashboard: Dashboard, keyword: str) -> Dashboard:
+    folded = keyword.casefold()
+
+    def keep(rows):
+        return tuple(item for item in rows if folded in item.name.casefold())
+
+    return Dashboard(
+        draft=keep(dashboard.draft),
+        open=keep(dashboard.open),
+        under_evaluation=keep(dashboard.under_evaluation),
+        decided=keep(dashboard.decided),
+        failed=keep(dashboard.failed),
+        cancelled=keep(dashboard.cancelled),
     )
 
 

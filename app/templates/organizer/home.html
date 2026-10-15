@@ -5,23 +5,68 @@
   <h1 class="h3 mb-0">המכרזים שלי</h1>
   <a class="btn btn-primary" href="{{ url_for('tenders.new_tender') }}">מכרז חדש</a>
 </div>
-<form method="get" action="{{ url_for('pages.organizer_home') }}" class="row g-2 align-items-end mb-3">
-  <div class="col-md-6">
+<form method="get" action="{{ url_for('pages.organizer_home') }}" class="row g-2 align-items-end mb-4">
+  <div class="col-md-10">
     <label class="form-label" for="q">חיפוש</label>
-    <input class="form-control" id="q" name="q" value="{{ filters.q }}" placeholder="שם או תיאור דרישה">
-  </div>
-  <div class="col-md-4">
-    <label class="form-label" for="status">סטטוס</label>
-    <select class="form-select" id="status" name="status">
-      <option value="">הכל</option>
-      {% for value, label in status_labels.items() %}
-      <option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select>
+    <input class="form-control" id="q" name="q" value="{{ filters.q }}" placeholder="שם מכרז">
   </div>
   <div class="col-md-2">
     <button type="submit" class="btn btn-outline-primary w-100">סינון</button>
   </div>
 </form>
-{% include "tenders/_list.html" %}
+
+{% macro group(anchor, title, rows, countdown) %}
+<section id="{{ anchor }}" class="mb-4">
+  <h2 class="h5">{{ title }}</h2>
+  {% if rows %}
+  <div class="list-group">
+    {% for tender in rows %}
+    <a class="list-group-item list-group-item-action" href="{{ url_for('tenders.organizer_tender', tender_id=tender.tender_id) }}">
+      <div class="d-flex justify-content-between align-items-center">
+        <strong>{{ tender.name }}</strong>
+        <span class="badge text-bg-secondary">{{ status_labels[tender.status] }}</span>
+      </div>
+      <div class="small text-muted">
+        <span class="ltr-numeric">{{ tender.bid_count }}</span> הצעות
+        · הגשה עד <span class="ltr-numeric">{{ tender.deadline|local_dt }}</span>
+        {% if countdown %}
+        · <span class="countdown" data-deadline="{{ tender.deadline.isoformat() }}"></span>
+        {% endif %}
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p>אין מכרזים</p>
+  {% endif %}
+</section>
+{% endmacro %}
+
+{{ group('group-draft', 'טיוטה', dashboard.draft, false) }}
+{{ group('group-open', 'פתוח להצעות', dashboard.open, true) }}
+{{ group('group-under-evaluation', 'בהערכה', dashboard.under_evaluation, false) }}
+{{ group('group-decided', 'הוכרע', dashboard.decided, false) }}
+{{ group('group-failed', 'נכשל', dashboard.failed, false) }}
+{{ group('group-cancelled', 'בוטל', dashboard.cancelled, false) }}
+{% endblock %}
+{% block scripts %}
+<script>
+  function renderCountdowns() {
+    document.querySelectorAll("[data-deadline]").forEach(function (node) {
+      var end = new Date(node.getAttribute("data-deadline")).getTime();
+      var left = end - Date.now();
+      if (left <= 0) {
+        node.textContent = "המועד עבר";
+        return;
+      }
+      var total = Math.floor(left / 1000);
+      var days = Math.floor(total / 86400);
+      var hours = Math.floor((total % 86400) / 3600);
+      var minutes = Math.floor((total % 3600) / 60);
+      node.textContent = days + " ימים, " + hours + " שעות, " + minutes + " דקות";
+    });
+  }
+  renderCountdowns();
+  setInterval(renderCountdowns, 60000);
+</script>
 {% endblock %}
