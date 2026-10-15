@@ -3,8 +3,9 @@
 Not an MCP tool. `SqlCompleteAssessmentHandler` appends
 `QualityAssessmentCompleted` or `BidDisqualified` on the bid stream and
 projects the assessment read models in that same transaction, and sets
-`rm_bid_for_assessment.status` to `completed` when that row exists. It never
-reads a price.
+`rm_bid_for_assessment.status` to `completed` when that row exists. A qualified
+completion inserts a `rm_requirement_score` row only when that pair is absent
+(`T-CMD-21`), so an intermediate score keeps its weight. It never reads a price.
 """
 
 from __future__ import annotations
@@ -71,7 +72,11 @@ INSERT INTO dbo.rm_bid_assessment (
 
 _INSERT_REQUIREMENT_SCORE = """
 INSERT INTO dbo.rm_requirement_score (bid_id, requirement_id, score, weight)
-VALUES (?, ?, ?, ?)
+SELECT ?, ?, ?, ?
+WHERE NOT EXISTS (
+    SELECT 1 FROM dbo.rm_requirement_score
+    WHERE bid_id = ? AND requirement_id = ?
+)
 """
 
 _COMPLETE_QUEUE = """
@@ -199,6 +204,8 @@ def _insert_requirement_score(
         item.requirement_id,
         item.score,
         item.weight,
+        bid_id,
+        item.requirement_id,
     )
     cursor.close()
 

@@ -4,6 +4,7 @@ Seams: `SqlCompleteAssessmentHandler`, `SqlRevealPricesHandler`.
 Skips when SQL Server is not configured. Stream ids are fresh. Nothing is deleted.
 
 T-CMD-13 — quality 90.0 is the next bid version, status qualified, requirement rows match.
+T-CMD-21 — a score row already stored is left in place when completion names it again.
 T-CMD-14 — a threshold disqualification stores no quality and no requirement rows.
 T-CMD-15 — a second terminal command raises and leaves the stream one event long.
 T-CMD-16 — reveal with one bid still open raises and leaves the tender stream unchanged.
@@ -34,6 +35,7 @@ from app.commands.complete_assessment import (  # noqa: E402
     RequirementScore,
     SqlCompleteAssessmentHandler,
 )
+from app.commands.score_requirement import ScoreRequirement, SqlScoreRequirementHandler  # noqa: E402
 from app.commands.reveal_prices import RevealRejected, SqlRevealPricesHandler  # noqa: E402
 from app.config import ConfigError, load_settings  # noqa: E402
 from app.events import EventStore  # noqa: E402
@@ -45,6 +47,8 @@ from app.events.event_types import (  # noqa: E402
     PRICE_OFFER_SEALED,
     PRICES_REVEALED,
     QUALITY_ASSESSMENT_COMPLETED,
+    REQUIREMENT_SCORED,
+    TENDER_CLOSED_FOR_BIDS,
     TENDER_CREATED,
     TENDER_FAILED,
 )
@@ -107,6 +111,88 @@ def test_qualified_completion_projects_score_rows() -> None:
         ("req-venue", 9, 40),
         ("req-content", 9, 30),
         ("req-experience", 9, 30),
+    }
+
+
+def test_completion_leaves_an_existing_score_row() -> None:
+    """T-CMD-21. Venue is already 9 at weight 40. Completion adds content at 8 and 60."""
+    _skip_unless_configured()
+    tender_id = f"tender-{uuid.uuid4()}"
+    bid_id = f"bid-{uuid.uuid4()}"
+
+    with transaction() as conn:
+        create_schema(conn)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO dbo.rm_requirement "
+            "(tender_id, requirement_id, position, type, weight, is_threshold, description) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            tender_id,
+            "req-venue",
+            1,
+            "VENUE",
+            40,
+            1,
+            "Hall for 5000",
+        )
+        cursor.close()
+        EventStore(conn).append(
+            tender_id,
+            0,
+            TENDER_CLOSED_FOR_BIDS,
+            {"closed_at": "2026-06-02T00:00:00Z", "bid_count": 1},
+        )
+        EventStore(conn).append(
+            bid_id,
+            0,
+            BID_SUBMITTED,
+            {
+                "tender_id": tender_id,
+                "supplier_id": "sup-1",
+                "concept": "ceremony",
+                "responses": [{"requirement_id": "req-venue", "answer": "Hall for 5000"}],
+            },
+        )
+        SqlScoreRequirementHandler(conn).handle(
+            ScoreRequirement(
+                bid_id=bid_id,
+                requirement_id="req-venue",
+                score=9,
+                justification="The hall seats 5000.",
+                sources=("https://example.com/hall",),
+                rubric_version="venue-1",
+            )
+        )
+        SqlCompleteAssessmentHandler(conn).handle(
+            QualityAssessmentCompleted(
+                bid_id,
+                90.0,
+                (
+                    RequirementScore("req-venue", 9, 40),
+                    RequirementScore("req-content", 8, 60),
+                ),
+            )
+        )
+
+    with transaction() as conn:
+        events = EventStore(conn).read_stream(bid_id)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT requirement_id, score, weight FROM dbo.rm_requirement_score "
+            "WHERE bid_id = ?",
+            bid_id,
+        )
+        scores = cursor.fetchall()
+        cursor.close()
+
+    assert [event.event_type for event in events] == [
+        BID_SUBMITTED,
+        REQUIREMENT_SCORED,
+        QUALITY_ASSESSMENT_COMPLETED,
+    ]
+    assert {(row[0], row[1], row[2]) for row in scores} == {
+        ("req-venue", 9, 40),
+        ("req-content", 8, 60),
     }
 
 

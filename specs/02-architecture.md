@@ -161,9 +161,9 @@ Steps 3 and 4 share one transaction, so a read model can never reflect an event 
 
 `PublishTender` · `AddRequirement` · `SubmitBid` · `WithdrawBid` · `CloseTender` · `ScoreRequirement` · `RevealPrices` · `OverrideScore` · `SelectWinner` · `CancelTender`
 
-`ScoreRequirement` is issued by the agent through `submit_requirement_score`; the rest originate from the UI. `RevealPrices` is issued by the web process only — never the agent.
+`ScoreRequirement` is issued by the agent through `submit_requirement_score`; the rest originate from the UI. `RevealPrices` is issued by the web process only — never the agent. `SqlScoreRequirementHandler` appends `RequirementScored` on the bid stream and inserts one `rm_requirement_score` row in that same transaction (`T-CMD-20`). Weight is copied from `rm_requirement`. A second command for the same `(bid_id, requirement_id)` appends nothing and returns the stored version (`T-AG-4`). The handler rejects a bid with no `BidSubmitted`, a tender with no `TenderClosedForBids` (`T-INV-2`), and a tender that has `PricesRevealed`, `TenderFailed`, or `TenderCancelled` (`T-INV-4`). It does not read `price_amount`.
 
-`CompleteAssessment` is the in-process command behind `run_once`. Its SQL handler appends `QualityAssessmentCompleted` or `BidDisqualified` on the bid stream and, in that same transaction, projects `rm_bid_assessment`. A qualified completion also projects one `rm_requirement_score` row per requirement in the payload. The handler does not read `PriceOfferSealed`. A bid stream that already has either terminal event rejects a second completion (`T-CMD-15`).
+`CompleteAssessment` is the in-process command behind `run_once`. Its SQL handler appends `QualityAssessmentCompleted` or `BidDisqualified` on the bid stream and, in that same transaction, projects `rm_bid_assessment`. A qualified completion inserts one `rm_requirement_score` row per requirement in the payload only when that `(bid_id, requirement_id)` is absent (`T-CMD-13`, `T-CMD-21`). An intermediate score already stored by `SqlScoreRequirementHandler` is left as it is. The handler does not read `PriceOfferSealed`. A bid stream that already has either terminal event rejects a second completion (`T-CMD-15`).
 
 `RevealPrices` replays the tender stream and every bid stream whose `BidSubmitted` names that tender. A bid that is not `QualityAssessmentCompleted` or `BidDisqualified` rejects the command and appends nothing (`INV-3`, `T-CMD-16`). When at least one bid is qualified, the handler loads `alpha` from `TenderCreated`, each qualified bid's `price_amount` from `PriceOfferSealed`, and `submitted_at` from `BidSubmitted.created_at`, calls `rank_bids`, and appends `PricesRevealed` then `FinalRankingCalculated`. It projects `rm_bid_ranking` for those qualified bids only. When every bid is terminal and none is qualified, it appends `TenderFailed` with `reason` `no_qualified_bids` and does not append `PricesRevealed` (`T-CMD-18`).
 
@@ -190,13 +190,18 @@ A query handler that opens the events table is a defect (`NFR-CQRS-2`).
 
 `rm_dashboard` holds bid counts and status per tender so `FR-DASH-5` holds. Deadline countdowns are rendered client-side from the stored deadline; the server stores no ticking value.
 
-Three of those read models have columns now (`T-CMD-13` … `T-CMD-18`):
+These read models have columns now (`T-CMD-13` … `T-CMD-18`, `T-QRY-1`):
 
 | Table | Columns |
 | --- | --- |
 | `dbo.rm_bid_assessment` | `bid_id`, `tender_id`, `status`, `quality_score`, `reason`, `failed_requirement_id` |
 | `dbo.rm_requirement_score` | `bid_id`, `requirement_id`, `score`, `weight` |
 | `dbo.rm_bid_ranking` | `tender_id`, `bid_id`, `quality`, `price_amount`, `price_score`, `final_score`, `rank` |
+| `dbo.rm_tender_detail` | `tender_id`, `name`, `event_type`, `event_date`, `region`, `alpha` |
+| `dbo.rm_requirement` | `tender_id`, `requirement_id`, `position`, `type`, `weight`, `is_threshold`, `description` |
+| `dbo.approved_hosts` | `name` |
+
+`position` is the order of `RequirementAdded` on the tender stream. `approved_hosts` is the seeded reference list, one row per name, shared by every tender. `PublishTender` is the writer for the two tender tables; that command is a later slice. `GetTenderRequirements` reads the rows that are already there.
 
 `status` is `qualified` or `disqualified`. `tender_id` is taken from `BidSubmitted` when that event is already on the bid stream. A threshold disqualification leaves `quality_score` null and writes no requirement rows. `rm_bid_ranking` has no row for a disqualified bid.
 
@@ -211,7 +216,7 @@ One further projection serves no query: `rm_bid_for_assessment` is the agent's w
 | `queued_at` | Default `SYSUTCDATETIME()`; claim order |
 | `claimed_at` | Null until claim; null again when a stalled claim is released |
 
-`GetTenderRequirements` is the read behind the MCP tool in §7. It is separate from `GetTenderDetails`, because that UI query may later carry bids and this one must not be able to. The handler returns `{tender, requirements, approved_hosts}`, or nothing when the tender is absent. The protocol is `app/queries/tender_requirements.py`. Its SQL handler arrives with the projections; until then the tool is exercised against an in-memory query.
+`GetTenderRequirements` is the read behind the MCP tool in §7. It is separate from `GetTenderDetails`, because that UI query may later carry bids and this one must not be able to. The handler returns `{tender, requirements, approved_hosts}`, or nothing when the tender is absent. `tender.type` is `event_type`. Requirements come back in `position` order. `approved_hosts` is every name in the reference table, ordered by name. The protocol is `app/queries/tender_requirements.py`. `SqlTenderRequirementsQuery.fetch` reads only those three tables (`T-QRY-1`, `NFR-CQRS-2`). The MCP tool's own tests still pass an in-memory query.
 
 ---
 
@@ -356,7 +361,7 @@ submit_requirement_score(
 
 FastMCP registers a wrapper per tool. `get_tender_requirements` accepts only `tender_id`, and `submit_requirement_score` accepts `bid_id`, `requirement_id`, `score`, `justification`, `sources`, and `rubric_version`. The query and the command handler stay out of the tool schema. `python -m mcp_server` starts the server on stdio. `bootstrap.init()` is the first statement in `mcp_server/server.py`, and the FastMCP import follows it.
 
-`submit_requirement_score(bid_id, requirement_id, score, justification, sources, rubric_version, handler)` validates the arguments, then dispatches a `ScoreRequirement` command. `rubric_version` is an argument because every `RequirementScored` records it (`03-domain-events.md` §2) and this tool is the only writer; §7 previously omitted it. `tender_id` is not an argument: `BidSubmitted` already stores it, and the handler reads it from the bid stream. `scored_by` is stamped `"agent"`. `sources` stays, because `FR-EVAL-2` and `FR-DET-2` render them; an empty list is accepted here, and `T-AG-7` remains the orchestrator's check against `verifications`. A score must be a real `int` in `0..10` (`T-AG-5`, `T-AG-6`); `bool` is rejected. Blank `bid_id`, `requirement_id`, `justification`, or `rubric_version`, and a blank source entry, raise `ValueError` before the handler runs. The handler's `ScoringRejected` propagates unchanged. Idempotency on `(bid_id, requirement_id)` and `INV-2` / `INV-4` belong to the handler, which is not built yet.
+`submit_requirement_score(bid_id, requirement_id, score, justification, sources, rubric_version, handler)` validates the arguments, then dispatches a `ScoreRequirement` command. `rubric_version` is an argument because every `RequirementScored` records it (`03-domain-events.md` §2) and this tool is the only writer; §7 previously omitted it. `tender_id` is not an argument: `BidSubmitted` already stores it, and the handler reads it from the bid stream. `scored_by` is stamped `"agent"`. `sources` stays, because `FR-EVAL-2` and `FR-DET-2` render them; an empty list is accepted here, and `T-AG-7` remains the orchestrator's check against `verifications`. A score must be a real `int` in `0..10` (`T-AG-5`, `T-AG-6`); `bool` is rejected. Blank `bid_id`, `requirement_id`, `justification`, or `rubric_version`, and a blank source entry, raise `ValueError` before the handler runs. The handler's `ScoringRejected` propagates unchanged. Idempotency on `(bid_id, requirement_id)` and `INV-2` / `INV-4` belong to `SqlScoreRequirementHandler` (`T-AG-4`, `T-INV-2`, `T-INV-4`). The tool opens one `transaction()` around that handler.
 
 ---
 

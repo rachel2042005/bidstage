@@ -14,6 +14,7 @@ T-AG-51 — experience JSON with proposed_score 4 comes back at temperature 0.
 T-AG-52 — `assess` dispatches on the material type.
 T-AG-53 — `AGENT_MODEL_PROVIDER` selects the chat model.
 T-AG-54 — `build_runtime` wires search, web, and one assessor.
+T-AG-55 — omitted requirements and submit are the SQL wrappers.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import json
 
 import pytest
 
-from agent.runner import build_runtime
+from agent.runner import _sql_requirements, _sql_submit, build_runtime
 from app.config import ConfigError, load_settings
 from app.services.semantic_search_service import SemanticSearchService
 from agent.adapters.assessor import StructuredAssessor
@@ -632,4 +633,30 @@ def test_build_runtime_wires_search_web_and_one_assessor(
     assert runtime.venue_model is runtime.host_model
     assert runtime.venue_model is runtime.music_model
     assert runtime.venue_model is runtime.experience_model
+    assert isinstance(runtime.venue_model, StructuredAssessor)
+
+
+def test_build_runtime_uses_sql_requirements_and_submit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-AG-55. Omitted requirements and submit are the SQL wrappers."""
+    monkeypatch.setenv(
+        "SOMEE_DB_CONNECTION_STRING",
+        "Driver={ODBC Driver 17 for SQL Server};Server=localhost;",
+    )
+    monkeypatch.setenv("TAVILY_API_KEY", "")
+    monkeypatch.setenv("AGENT_MODEL_PROVIDER", "openai")
+    monkeypatch.delenv("AGENT_MODEL", raising=False)
+    settings = load_settings()
+    queue = object()
+    rubrics = SemanticSearchService(object())
+
+    runtime = build_runtime(settings, queue=queue, rubrics=rubrics)
+
+    assert runtime.queue is queue
+    assert runtime.rubrics is rubrics
+    assert runtime.search is rubrics
+    assert runtime.requirements is _sql_requirements
+    assert runtime.submit is _sql_submit
+    assert runtime.web.search("היכל") == ()
     assert isinstance(runtime.venue_model, StructuredAssessor)

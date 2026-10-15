@@ -4,9 +4,9 @@ Run with: python -m agent.runner
 
 `run_once` claims one bid and finishes its assessment (`T-AG-27`).
 `main(["--once"])` runs that cycle once (`T-AG-41`). With no flag, `main`
-calls `run_forever` (`T-AG-42`). `build_runtime(settings, *, requirements, submit)`
-supplies the queue, Tavily, one chat assessor, and a `complete` callable on its
-own transaction (`T-AG-54`). `requirements` and `submit` stay arguments.
+calls `run_forever` (`T-AG-42`). `build_runtime(settings)` supplies the queue,
+Tavily, one chat assessor, the SQL requirements query, the SQL score handler,
+and a `complete` callable on its own transaction (`T-AG-54`, `T-AG-55`).
 """
 
 from __future__ import annotations
@@ -171,16 +171,50 @@ def run_once(
     return 1
 
 
+def _sql_requirements(tender_id: str) -> dict[str, Any]:
+    """`get_tender_requirements` over `SqlTenderRequirementsQuery` (`T-AG-55`)."""
+    from app.queries.tender_requirements import SqlTenderRequirementsQuery
+    from mcp_server.server import get_tender_requirements
+
+    return get_tender_requirements(tender_id, SqlTenderRequirementsQuery())
+
+
+def _sql_submit(
+    bid_id: str,
+    requirement_id: str,
+    score: int,
+    justification: str,
+    sources: list[str],
+    rubric_version: str,
+) -> dict[str, Any]:
+    """`submit_requirement_score` inside one transaction (`T-AG-55`)."""
+    from app.commands.score_requirement import SqlScoreRequirementHandler
+    from app.events.db import transaction
+    from mcp_server.server import submit_requirement_score
+
+    with transaction() as conn:
+        return submit_requirement_score(
+            bid_id,
+            requirement_id,
+            score,
+            justification,
+            sources,
+            rubric_version,
+            SqlScoreRequirementHandler(conn),
+        )
+
+
 def build_runtime(
     settings: Any,
     *,
-    requirements: RequirementsTool,
-    submit: ScoreTool,
+    requirements: RequirementsTool | None = None,
+    submit: ScoreTool | None = None,
     queue: AssessmentQueue | None = None,
     rubrics: RubricIndex | None = None,
 ) -> AgentRuntime:
-    """Queue and completion on separate connections. Rubrics come from Chroma.
+    """Queue, requirements, submit, and completion. Rubrics come from Chroma.
 
+    Omitted `requirements` and `submit` are the SQL handlers (`T-AG-55`).
     `queue` and `rubrics` default to SQL Server and Chroma. Tests pass stand-ins
     so this function does not open either service (`T-AG-54`).
     """
@@ -189,6 +223,10 @@ def build_runtime(
     from app.commands.complete_assessment import SqlCompleteAssessmentHandler
     from app.events.db import connect, transaction
 
+    if requirements is None:
+        requirements = _sql_requirements
+    if submit is None:
+        submit = _sql_submit
     if queue is None:
         from app.projections.bid_for_assessment import SqlAssessmentQueue
 

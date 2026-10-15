@@ -8,6 +8,9 @@ rm_dashboard, rm_requirement_score, rm_bid_assessment, and rm_bid_for_assessment
 
 `rm_bid_assessment`, `rm_requirement_score`, and `rm_bid_ranking` are projected
 by `SqlCompleteAssessmentHandler` and `SqlRevealPricesHandler`.
+`rm_tender_detail`, `rm_requirement`, and `approved_hosts` are created with the
+schema. `PublishTender` fills the tender rows later. `SqlTenderRequirementsQuery`
+reads them.
 
 rm_bid_for_assessment serves the agent rather than a query, and deliberately
 has no price column — that absence is what enforces NFR-AGT-4.

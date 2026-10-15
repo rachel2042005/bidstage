@@ -118,6 +118,54 @@ BEGIN
 END
 """
 
+# Tender requirements for GetTenderRequirements. PublishTender fills these later.
+CREATE_RM_TENDER_DETAIL = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables WHERE name = 'rm_tender_detail' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.rm_tender_detail (
+        tender_id   VARCHAR(100)  NOT NULL,
+        name        NVARCHAR(400) NOT NULL,
+        event_type  VARCHAR(100)  NOT NULL,
+        event_date  NVARCHAR(40)  NOT NULL,
+        region      NVARCHAR(200) NOT NULL,
+        alpha       FLOAT         NOT NULL,
+        CONSTRAINT pk_rm_tender_detail PRIMARY KEY (tender_id)
+    );
+END
+"""
+
+CREATE_RM_REQUIREMENT = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables WHERE name = 'rm_requirement' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.rm_requirement (
+        tender_id       VARCHAR(100)  NOT NULL,
+        requirement_id  VARCHAR(100)  NOT NULL,
+        position        INT           NOT NULL,
+        type            VARCHAR(20)   NOT NULL,
+        weight          INT           NOT NULL,
+        is_threshold    BIT           NOT NULL,
+        description     NVARCHAR(MAX) NOT NULL,
+        CONSTRAINT pk_rm_requirement PRIMARY KEY (tender_id, requirement_id)
+    );
+END
+"""
+
+CREATE_APPROVED_HOSTS = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables WHERE name = 'approved_hosts' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.approved_hosts (
+        name NVARCHAR(200) NOT NULL,
+        CONSTRAINT pk_approved_hosts PRIMARY KEY (name)
+    );
+END
+"""
+
 TABLE_EXISTS = (
     "SELECT COUNT(*) FROM sys.tables "
     "WHERE name = 'events' AND schema_id = SCHEMA_ID('dbo')"
@@ -141,6 +189,9 @@ def create_schema(conn: pyodbc.Connection) -> None:
     cursor.execute(CREATE_RM_REQUIREMENT_SCORE)
     cursor.execute(CREATE_RM_BID_RANKING)
     cursor.execute(CREATE_RM_BID_FOR_ASSESSMENT)
+    cursor.execute(CREATE_RM_TENDER_DETAIL)
+    cursor.execute(CREATE_RM_REQUIREMENT)
+    cursor.execute(CREATE_APPROVED_HOSTS)
     cursor.close()
 
 

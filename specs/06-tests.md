@@ -111,10 +111,18 @@ One test per invariant in `03-domain-events.md` §3, each constructing an illega
 | `T-CMD-17` | Worked example, both bids qualified, α = 0.6 | `PricesRevealed` then `FinalRankingCalculated`; B rank 1 at 84.4, A rank 2 at 80.3 |
 | `T-CMD-18` | Every bid disqualified | `TenderFailed` with `reason` `no_qualified_bids`; no `PricesRevealed` |
 | `T-CMD-19` | `QualityAssessmentCompleted` after the bid was queued | Queue `status` is `completed`; a following claim returns nothing |
+| `T-CMD-20` | Closed tender, `BidSubmitted`, requirement weight 40, score 9 | Next bid version is `RequirementScored`; `rm_requirement_score` stores weight 40 |
+| `T-CMD-21` | Venue already scored at 9 weight 40, then qualified completion also names content at 8 weight 60 | Completion appends; both score rows exist; the venue row stays 9 and 40 |
+| `T-QRY-1` | `rm_tender_detail` plus two `rm_requirement` rows and one `approved_hosts` name | `fetch` returns `tender.type` from `event_type`, the requirements in `position` order, and that host name |
+| `T-QRY-2` | A tender id with no `rm_tender_detail` row | `fetch` returns `None` |
 
 `T-CMD-11` targets the subtle bug in override handling: reordering is systemic, not local.
 
 `tests/test_assessment_sql.py` covers `T-CMD-13` through `T-CMD-18` against SQL Server. The suite skips when `SOMEE_DB_CONNECTION_STRING` is unset. Each test uses a fresh stream id and does not delete. `SqlCompleteAssessmentHandler` is the seam for the terminal events. `SqlRevealPricesHandler` is the seam for reveal and `TenderFailed`. Streams are read back through `EventStore`. Read models are read with `SELECT`.
+
+`tests/test_tender_requirements_query.py` covers `T-QRY-1` and `T-QRY-2` at `SqlTenderRequirementsQuery.fetch`. The suite skips when `SOMEE_DB_CONNECTION_STRING` is unset. The tender id is fresh. The host name is fresh because `approved_hosts` is shared and nothing is deleted. The test inserts the read-model rows directly; `PublishTender` is the later writer.
+
+`tests/test_score_requirement.py` covers `T-CMD-20`, `T-AG-4`, `T-INV-2`, and `T-INV-4` at `SqlScoreRequirementHandler.handle`. The suite skips when `SOMEE_DB_CONNECTION_STRING` is unset. Stream ids are fresh. Nothing is deleted. The requirement row is inserted directly; its weight 40 is the expected score-row weight. `T-AG-4` retries with score 4 and rubric `venue-2`; the stored event stays score 9 at version 2. `T-INV-4` reveals amount `900000` and leaves that sealed event on the bid.
 
 ---
 
@@ -193,8 +201,9 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 | `T-AG-52` | `assess` is handed each material type | The same assessor returns that type's assessment |
 | `T-AG-53` | `AGENT_MODEL_PROVIDER` | `ollama` selects `qwen3:8b` and `http://localhost:11434/v1`. `openai` selects `gpt-4o-mini`. `ollama` plus `AGENT_MODEL=gpt-4o-mini` is rejected |
 | `T-AG-54` | `build_runtime(settings, requirements=..., submit=...)` with stand-ins for the queue and the vector store | `search` is the rubric service, `web.search` returns `()` when the key is empty, and one assessor is all five model ports. `requirements` and `submit` are the objects passed in |
+| `T-AG-55` | `build_runtime(settings)` with stand-ins for the queue and the vector store, and no `requirements` or `submit` | Those two are the SQL wrappers. The stand-in queue and rubrics are kept. No SQL call |
 
-`tests/test_mcp_server.py` covers `T-AG-2` and `T-AG-3` against an in-memory `GetTenderRequirements` query. A price column on the view is absent from the payload. A `HOST` requirement includes the host list the query supplied. A blank id raises `ValueError` before lookup. An unknown id raises `TenderNotFound`. The same file covers `submit_requirement_score`: the dispatched `ScoreRequirement` is a known literal and the handler's `{"accepted": True, "event_version": 3}` is returned unchanged; scores outside 0–10, bools, and non-integers raise `ValueError` (`T-AG-5`, `T-AG-6`); blank text fields raise `ValueError` before dispatch; `ScoringRejected` propagates. `T-AG-4` waits for the SQL handler.
+`tests/test_mcp_server.py` covers `T-AG-2` and `T-AG-3` against an in-memory `GetTenderRequirements` query. A price column on the view is absent from the payload. A `HOST` requirement includes the host list the query supplied. A blank id raises `ValueError` before lookup. An unknown id raises `TenderNotFound`. The same file covers `submit_requirement_score`: the dispatched `ScoreRequirement` is a known literal and the handler's `{"accepted": True, "event_version": 3}` is returned unchanged; scores outside 0–10, bools, and non-integers raise `ValueError` (`T-AG-5`, `T-AG-6`); blank text fields raise `ValueError` before dispatch; `ScoringRejected` propagates. `T-AG-4` is the SQL handler in `tests/test_score_requirement.py`: the second call returns the stored version and appends nothing.
 
 `tests/test_venue_evaluator.py` covers `T-AG-13`, `T-AG-16`, `T-AG-17`, `T-AG-18`, and `T-AG-19` at `evaluate_venue`. Regulations, web search, and the model are fakes. The model reports the constraining finding only when it was given the whole rubric plus the regulation text and the web page. `T-AG-19` proposes 4, which sits below the 7–10 band.
 
@@ -214,7 +223,7 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 
 `tests/test_assessment_queue.py` covers `T-AG-1`, `T-AG-39`, `T-AG-40`, `T-AG-11`, `T-CMD-19`, `T-AG-43`, and `T-AG-44` against SQL Server. The suite skips when `SOMEE_DB_CONNECTION_STRING` is unset. `T-AG-39` enqueues the venue answer `היכל`. `T-AG-40` seals `900000` on the bid stream. `T-AG-11` claims one pending bid from two connections. `T-AG-43` ages that row past a timeout which still covers every other claim, so the sweep returns that bid alone and the next claim takes it. `T-AG-44` releases against that same kind of timeout immediately after claim.
 
-`tests/test_agent_ports.py` covers `T-AG-45` through `T-AG-54` without Tavily, OpenAI, Ollama, SQL Server, or Chroma. `T-AG-46` posts through a stand-in opener. `T-AG-47` through `T-AG-52` return a stand-in completion. `T-AG-54` passes stand-ins for the queue and the vector store.
+`tests/test_agent_ports.py` covers `T-AG-45` through `T-AG-55` without Tavily, OpenAI, Ollama, SQL Server, or Chroma. `T-AG-46` posts through a stand-in opener. `T-AG-47` through `T-AG-52` return a stand-in completion. `T-AG-54` passes stand-ins for the queue and the vector store. `T-AG-55` omits `requirements` and `submit` and keeps those same stand-ins.
 
 ### Score consistency
 
