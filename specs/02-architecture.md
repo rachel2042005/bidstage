@@ -180,6 +180,7 @@ A query handler that opens the events table is a defect (`NFR-CQRS-2`).
 | `GetBidComparison` | `rm_bid_ranking` |
 | `GetDashboardStats` | `rm_dashboard` |
 | `GetBidAssessment` | `rm_requirement_score` |
+| `SearchOrganizerBids` | `rm_dashboard` for the organizer's under-evaluation, decided and failed tenders; `rm_bid_ranking` for the supplier name; the excerpt comes from the bid search port, which is called with those tender ids and never sees a price |
 
 `rm_dashboard` holds bid counts and status per tender so `FR-DASH-5` holds. Deadline countdowns are rendered client-side from the stored deadline; the server stores no ticking value.
 

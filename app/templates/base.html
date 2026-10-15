@@ -21,6 +21,7 @@
           <a class="nav-link" href="{{ url_for('bids.my_bids') }}">ההצעות שלי</a>
           {% elif current_user.role == 'organizer' %}
           <a class="nav-link" href="{{ url_for('pages.organizer_home') }}">המכרזים שלי</a>
+          <a class="nav-link" href="{{ url_for('bid_search.organizer_search') }}">חיפוש בהצעות</a>
           {% endif %}
           <a class="nav-link" href="{{ url_for('auth.logout') }}">יציאה</a>
         {% else %}

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}חיפוש בהצעות · BidStage{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">חיפוש בהצעות</h1>
+<form method="get" action="{{ url_for('bid_search.organizer_search') }}" class="row g-2 align-items-end mb-4">
+  <div class="col-md-6">
+    <label class="form-label" for="q">טקסט</label>
+    <input class="form-control" id="q" name="q" value="{{ query }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label" for="tender_id">מכרז</label>
+    <select class="form-select" id="tender_id" name="tender_id">
+      <option value="">כל המכרזים</option>
+      {% for tender in tenders %}
+      <option value="{{ tender.tender_id }}" {% if tender.tender_id == selected_tender_id %}selected{% endif %}>{{ tender.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <button type="submit" class="btn btn-primary w-100">חיפוש</button>
+  </div>
+</form>
+{% if notice %}
+<p>{{ notice }}</p>
+{% endif %}
+{% if hits %}
+<div class="list-group">
+  {% for hit in hits %}
+  <a class="list-group-item list-group-item-action" href="{{ url_for('comparison.comparison', tender_id=hit.tender_id) }}">
+    <div><strong>{{ hit.supplier_name }}</strong> · {{ hit.tender_name }}</div>
+    <div>{{ hit.excerpt }}</div>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}
