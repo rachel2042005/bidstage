@@ -13,12 +13,16 @@ from typing import Protocol
 
 import pyodbc
 
-from app.domain.tender import DRAFT, OPEN
+from app.domain.tender import DRAFT, FAILED, OPEN, UNDER_EVALUATION
 from app.domain.user import UnknownEventTypeError
 from app.events.event_types import (
+    FINAL_RANKING_CALCULATED,
+    PRICES_REVEALED,
     REQUIREMENT_ADDED,
+    TENDER_CLOSED_FOR_BIDS,
     TENDER_CREATED,
     TENDER_EVENTS,
+    TENDER_FAILED,
     TENDER_PUBLISHED,
 )
 
@@ -120,6 +124,16 @@ _SUMMARY_COLUMNS = (
 
 
 @dataclass(frozen=True)
+class DashboardEntry:
+    tender_id: str
+    organizer_id: str
+    name: str
+    status: str
+    deadline: datetime
+    bid_count: int
+
+
+@dataclass(frozen=True)
 class TenderSummary:
     tender_id: str
     organizer_id: str
@@ -165,6 +179,10 @@ class TendersProjection(Protocol):
     def get(self, tender_id: str) -> TenderSummary | None: ...
     def requirements_for(self, tender_id: str) -> list[RequirementRecord]: ...
     def search(self, criteria: TenderSearch) -> list[TenderSummary]: ...
+    def dashboard_for(self, organizer_id: str) -> list[DashboardEntry]: ...
+    def increment_bid_count(self, tender_id: str) -> None: ...
+    def apply_closed(self, tender_id: str, data: dict) -> None: ...
+    def apply_failed(self, tender_id: str, data: dict) -> None: ...
     def clear(self) -> None: ...
 
 
@@ -173,11 +191,13 @@ class InMemoryTendersProjection:
         self._tenders: dict[str, TenderSummary] = {}
         self._requirements: dict[str, list[RequirementRecord]] = {}
         self._search_text: dict[str, str] = {}
+        self._dashboard: dict[str, DashboardEntry] = {}
 
     def apply_created(self, tender_id: str, data: dict) -> None:
         self._tenders[tender_id] = _summary_from_created(tender_id, data)
         self._requirements[tender_id] = []
         self._search_text[tender_id] = initial_search_text(data)
+        self._sync_dashboard(tender_id)
 
     def apply_requirement(self, tender_id: str, data: dict) -> None:
         if tender_id not in self._tenders:
@@ -193,6 +213,38 @@ class InMemoryTendersProjection:
             current,
             status=OPEN,
             published_at=_parse_timestamp(data["published_at"]),
+        )
+        self._sync_dashboard(tender_id)
+
+    def apply_closed(self, tender_id: str, data: dict) -> None:
+        current = self._tenders[tender_id]
+        self._tenders[tender_id] = replace(current, status=UNDER_EVALUATION)
+        self._sync_dashboard(tender_id)
+
+    def apply_failed(self, tender_id: str, data: dict) -> None:
+        current = self._tenders[tender_id]
+        self._tenders[tender_id] = replace(current, status=FAILED)
+        self._sync_dashboard(tender_id)
+
+    def dashboard_for(self, organizer_id: str) -> list[DashboardEntry]:
+        rows = [row for row in self._dashboard.values() if row.organizer_id == organizer_id]
+        rows.sort(key=lambda row: (row.deadline, row.name))
+        return rows
+
+    def increment_bid_count(self, tender_id: str) -> None:
+        current = self._dashboard[tender_id]
+        self._dashboard[tender_id] = replace(current, bid_count=current.bid_count + 1)
+
+    def _sync_dashboard(self, tender_id: str) -> None:
+        summary = self._tenders[tender_id]
+        previous = self._dashboard.get(tender_id)
+        self._dashboard[tender_id] = DashboardEntry(
+            tender_id=tender_id,
+            organizer_id=summary.organizer_id,
+            name=summary.name,
+            status=summary.status,
+            deadline=summary.deadline,
+            bid_count=previous.bid_count if previous else 0,
         )
 
     def get(self, tender_id: str) -> TenderSummary | None:
@@ -227,6 +279,7 @@ class InMemoryTendersProjection:
         self._tenders.clear()
         self._requirements.clear()
         self._search_text.clear()
+        self._dashboard.clear()
 
 
 class SqlTendersProjection:
@@ -238,6 +291,7 @@ class SqlTendersProjection:
         text = initial_search_text(data)
         _insert_summary(self._conn, "dbo.rm_tender_detail", summary)
         _insert_summary(self._conn, "dbo.rm_tender_search", summary, search_text=text)
+        self._insert_dashboard(summary)
 
     def apply_requirement(self, tender_id: str, data: dict) -> None:
         record = _requirement_from_data(tender_id, data)
@@ -277,6 +331,56 @@ class SqlTendersProjection:
                 f"UPDATE {table} SET status = ?, published_at = ? WHERE tender_id = ?",
                 OPEN,
                 published_at,
+                tender_id,
+            )
+        cursor.execute(
+            "UPDATE dbo.rm_dashboard SET status = ? WHERE tender_id = ?",
+            OPEN,
+            tender_id,
+        )
+        cursor.close()
+
+    def apply_closed(self, tender_id: str, data: dict) -> None:
+        self._set_dashboard_status(tender_id, UNDER_EVALUATION)
+
+    def apply_failed(self, tender_id: str, data: dict) -> None:
+        self._set_dashboard_status(tender_id, FAILED)
+
+    def dashboard_for(self, organizer_id: str) -> list[DashboardEntry]:
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "SELECT tender_id, organizer_id, name, status, deadline, bid_count "
+            "FROM dbo.rm_dashboard WHERE organizer_id = ? ORDER BY deadline, name",
+            organizer_id,
+        )
+        rows = [
+            DashboardEntry(
+                tender_id=str(row[0]),
+                organizer_id=str(row[1]),
+                name=str(row[2]),
+                status=str(row[3]),
+                deadline=_aware(row[4]),
+                bid_count=int(row[5]),
+            )
+            for row in cursor.fetchall()
+        ]
+        cursor.close()
+        return rows
+
+    def increment_bid_count(self, tender_id: str) -> None:
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "UPDATE dbo.rm_dashboard SET bid_count = bid_count + 1 WHERE tender_id = ?",
+            tender_id,
+        )
+        cursor.close()
+
+    def _set_dashboard_status(self, tender_id: str, status: str) -> None:
+        cursor = self._conn.cursor()
+        for table in ("dbo.rm_tender_search", "dbo.rm_tender_detail", "dbo.rm_dashboard"):
+            cursor.execute(
+                f"UPDATE {table} SET status = ? WHERE tender_id = ?",
+                status,
                 tender_id,
             )
         cursor.close()
@@ -326,6 +430,7 @@ class SqlTendersProjection:
         cursor.execute("DELETE FROM dbo.rm_requirement")
         cursor.execute("DELETE FROM dbo.rm_tender_search")
         cursor.execute("DELETE FROM dbo.rm_tender_detail")
+        cursor.execute("DELETE FROM dbo.rm_dashboard")
         cursor.close()
 
     def _next_sort_order(self, tender_id: str) -> int:
@@ -337,6 +442,21 @@ class SqlTendersProjection:
         value = int(cursor.fetchone()[0]) + 1
         cursor.close()
         return value
+
+    def _insert_dashboard(self, summary: TenderSummary) -> None:
+        cursor = self._conn.cursor()
+        cursor.setinputsizes([None, None, (pyodbc.SQL_WVARCHAR, 200, 0), None, None, None])
+        cursor.execute(
+            "INSERT INTO dbo.rm_dashboard "
+            "(tender_id, organizer_id, name, status, deadline, bid_count) "
+            "VALUES (?, ?, ?, ?, ?, 0)",
+            summary.tender_id,
+            summary.organizer_id,
+            summary.name,
+            summary.status,
+            _sql_datetime(summary.deadline),
+        )
+        cursor.close()
 
 
 def create_tenders_projection(conn: pyodbc.Connection) -> None:
@@ -356,6 +476,12 @@ def project_tender_event(tenders: TendersProjection, event) -> None:
         tenders.apply_requirement(event.stream_id, event.event_data)
     elif event.event_type == TENDER_PUBLISHED:
         tenders.apply_published(event.stream_id, event.event_data)
+    elif event.event_type == TENDER_CLOSED_FOR_BIDS:
+        tenders.apply_closed(event.stream_id, event.event_data)
+    elif event.event_type == TENDER_FAILED:
+        tenders.apply_failed(event.stream_id, event.event_data)
+    elif event.event_type in (PRICES_REVEALED, FINAL_RANKING_CALCULATED):
+        return
     elif event.event_type in TENDER_EVENTS:
         raise UnknownEventTypeError(event.event_type)
 

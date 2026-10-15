@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}השוואת הצעות · {{ details.tender.name }}{% endblock %}
+{% block content %}
+<p class="mb-2"><a href="{{ url_for('tenders.organizer_tender', tender_id=details.tender.tender_id) }}">חזרה למכרז</a></p>
+<h1 class="h3">השוואת הצעות · {{ details.tender.name }}</h1>
+<p><span class="badge text-bg-secondary">{{ status_labels[details.tender.status] }}</span></p>
+{% if can_reveal %}
+<form method="post" action="{{ url_for('comparison.reveal', tender_id=details.tender.tender_id) }}" class="mb-3">
+  <button type="submit" class="btn btn-primary">פתיחת מעטפות</button>
+</form>
+{% endif %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>ספק</th>
+      <th>סטטוס</th>
+      <th><a href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id, sort='quality') }}">איכות</a></th>
+      <th><a href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id, sort='price') }}">מחיר</a></th>
+      <th>ציון מחיר</th>
+      <th><a href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id, sort='final') }}">ציון סופי</a></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr class="{% if row.status == 'disqualified' %}table-warning{% endif %}">
+      <td>{{ row.supplier_name }}</td>
+      <td>{{ bid_status_labels[row.status] }}</td>
+      <td class="ltr-numeric">{% if row.quality is none %}חסום{% else %}{{ row.quality }}{% endif %}</td>
+      <td class="ltr-numeric">{% if row.price_amount is none %}חסום{% else %}₪{{ row.price_amount|shekels }}{% endif %}</td>
+      <td class="ltr-numeric">{% if row.price_score is none %}חסום{% else %}{{ row.price_score }}{% endif %}</td>
+      <td class="ltr-numeric">{% if row.final_score is none %}חסום{% else %}{{ row.final_score }}{% endif %}{% if row.rank %} · {{ row.rank }}{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">אין הצעות</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

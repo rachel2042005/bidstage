@@ -57,9 +57,10 @@ def submit(tender_id: str):
             concept=request.form.get("concept", ""),
             responses=responses,
             price_amount=price_amount,
+            supplier_display_name=session.get("display_name") or "",
         )
-        with unit_of_work() as (store, _users, _tenders, bids):
-            submit_bid(store, bids, command, notifier=_notifier())
+        with unit_of_work() as (store, _users, tenders, bids):
+            submit_bid(store, bids, command, notifier=_notifier(), tenders=tenders)
     except TenderNotFoundError:
         abort(404)
     except DomainError as exc:

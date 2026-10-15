@@ -14,6 +14,8 @@ from app.domain.tender import CURRENCY, OPEN, TenderState
 from app.domain.user import DomainError
 
 SUBMITTED = "submitted"
+QUALIFIED = "qualified"
+DISQUALIFIED = "disqualified"
 
 
 class IncompleteBidError(DomainError):

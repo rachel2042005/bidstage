@@ -14,6 +14,7 @@ from flask import Flask, render_template, session  # noqa: E402
 from app.config import ConfigError, load_settings  # noqa: E402
 from app.routes.auth import bp as auth_bp  # noqa: E402
 from app.routes.bids import bp as bids_bp  # noqa: E402
+from app.routes.comparison import bp as comparison_bp  # noqa: E402
 from app.routes.formatting import (  # noqa: E402
     format_alpha,
     format_event_day,
@@ -70,6 +71,7 @@ def create_app(*, event_store=None, users=None, tenders=None, bids=None, bid_not
     app.register_blueprint(pages_bp)
     app.register_blueprint(tenders_bp)
     app.register_blueprint(bids_bp)
+    app.register_blueprint(comparison_bp)
 
     app.add_template_filter(format_shekels, "shekels")
     app.add_template_filter(format_event_day, "event_day")
