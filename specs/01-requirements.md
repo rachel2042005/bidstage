@@ -128,8 +128,9 @@ Administrator role and supplier approval workflow; payment or contracting after 
 | `NFR-VEC-1` *[6]* | Bid concepts, supplier portfolios, scoring rubrics and regulations are embedded into a vector database for semantic retrieval. |
 | `NFR-VEC-2` *[6]* | Four separate collections are used: `bid_concepts`, `portfolios`, `rubrics`, `regulations`. |
 | `NFR-VEC-3` *[6]* | Rubrics are stored unchunked, one document per requirement type. |
-| `NFR-VEC-4` *[6]* | The embedding model is multilingual so Hebrew is indexed natively: OpenAI `text-embedding-3-small`, 1536 dimensions. |
+| `NFR-VEC-4` *[6]* | The embedding model is multilingual so Hebrew is indexed natively. Two providers are supported, selected by `EMBEDDING_PROVIDER`: OpenAI `text-embedding-3-small` at 1536 dimensions (default), or local Ollama `qwen3-embedding:0.6b` at 1024 dimensions. An English-only model is never acceptable. |
 | `NFR-VEC-5` | The vector store sits behind a thin interface so it can be replaced by configuration. |
+| `NFR-VEC-6` | Each collection records the model that built it, and the store refuses to serve a collection built by a different model. Vectors from two models are not comparable, and the failure is otherwise undetectable: search simply returns the wrong documents. |
 | `NFR-CQRS-1` *[7]* | All state change flows through commands; all reads flow through queries. The two never share a model. |
 | `NFR-CQRS-2` *[7]* | Queries read exclusively from read models, never from the event stream. |
 | `NFR-CQRS-3` *[7]* | Read models are projected synchronously inside the command handler that appended the event. |
@@ -138,7 +139,7 @@ Administrator role and supplier approval workflow; payment or contracting after 
 | `NFR-ES-3` *[8]* | Aggregate state is rebuilt by replaying its stream in `Version` order. |
 | `NFR-ES-4` *[8]* | Concurrent writes to one aggregate are rejected by `UNIQUE (StreamId, Version)`. |
 | `NFR-ES-5` *[8]* | The stream is a complete audit trail: every score, override and reveal is attributable and timestamped. |
-| `NFR-MCP-1` *[9]* | Web search is consumed through the Tavily MCP server. |
+| `NFR-MCP-1` *[9]* | Web search for verification is a Tavily HTTP client behind `PageSearch`. An empty or missing `TAVILY_API_KEY` returns no pages. |
 | `NFR-MCP-2` *[9]* | Email is sent through the Gmail MCP server. |
 | `NFR-TOOL-1` *[10]* | The project exposes exactly two of its own MCP tools, built with FastMCP: `get_tender_requirements` and `submit_requirement_score`. |
 | `NFR-AGT-1` *[11]* | The agent is a Deep Agent that plans and delegates to one sub-agent per requirement type. |
@@ -178,7 +179,7 @@ Verified on the development machine; see `00-overview.md` §13.
 | 4.4 dashboard | `FR-DASH-1` … `FR-DASH-5` |
 | 4.5 data entry | `FR-ENT-1` … `FR-ENT-8` |
 | 5 separate agent process | `NFR-AGT-2` |
-| 6 vector database | `NFR-VEC-1` … `NFR-VEC-5` |
+| 6 vector database | `NFR-VEC-1` … `NFR-VEC-6` |
 | 7 CQRS | `NFR-CQRS-1` … `NFR-CQRS-3` |
 | 8 Event Sourcing | `NFR-ES-1` … `NFR-ES-5` |
 | 9 external MCP | `NFR-MCP-1`, `NFR-MCP-2`, `FR-NOT-1` … `FR-NOT-4` |
