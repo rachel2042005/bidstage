@@ -21,19 +21,19 @@
     </div>
     <div class="col-md-4">
       <label class="form-label" for="event_date">תאריך האירוע</label>
-      <input class="form-control ltr-numeric" type="date" id="event_date" name="event_date" required value="{{ form.get('event_date', '') }}">
+      <input class="form-control ltr-numeric" type="date" id="event_date" name="event_date" value="{{ form.get('event_date', '') }}">
     </div>
     <div class="col-md-4">
       <label class="form-label" for="region">אזור</label>
-      <input class="form-control" id="region" name="region" required value="{{ form.get('region', '') }}">
+      <input class="form-control" id="region" name="region" value="{{ form.get('region', '') }}">
     </div>
     <div class="col-md-4">
       <label class="form-label" for="budget">תקציב משוער (₪)</label>
-      <input class="form-control ltr-numeric" id="budget" name="budget" inputmode="decimal" required value="{{ form.get('budget', '') }}">
+      <input class="form-control ltr-numeric" id="budget" name="budget" inputmode="decimal" value="{{ form.get('budget', '') }}">
     </div>
     <div class="col-md-6">
       <label class="form-label" for="deadline">מועד אחרון להגשה (שעון ישראל)</label>
-      <input class="form-control ltr-numeric" type="datetime-local" id="deadline" name="deadline" required value="{{ form.get('deadline', '') }}">
+      <input class="form-control ltr-numeric" type="datetime-local" id="deadline" name="deadline" value="{{ form.get('deadline', '') }}">
     </div>
     <div class="col-md-6">
       <label class="form-label" for="alpha">משקל איכות α (0–1)</label>

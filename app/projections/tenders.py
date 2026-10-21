@@ -37,9 +37,9 @@ BEGIN
         organizer_id     VARCHAR(100)  NOT NULL,
         name             NVARCHAR(200) NOT NULL,
         event_type       VARCHAR(20)   NOT NULL,
-        event_date       DATE          NOT NULL,
+        event_date       DATE          NULL,
         region           NVARCHAR(100) NOT NULL,
-        deadline         DATETIME2     NOT NULL,
+        deadline         DATETIME2     NULL,
         status           VARCHAR(30)   NOT NULL,
         alpha            DECIMAL(3, 2) NOT NULL,
         budget_amount    BIGINT        NOT NULL,
@@ -67,9 +67,9 @@ BEGIN
         organizer_id     VARCHAR(100)  NOT NULL,
         name             NVARCHAR(200) NOT NULL,
         event_type       VARCHAR(20)   NOT NULL,
-        event_date       DATE          NOT NULL,
+        event_date       DATE          NULL,
         region           NVARCHAR(100) NOT NULL,
-        deadline         DATETIME2     NOT NULL,
+        deadline         DATETIME2     NULL,
         status           VARCHAR(30)   NOT NULL,
         alpha            DECIMAL(3, 2) NOT NULL,
         budget_amount    BIGINT        NOT NULL,
@@ -109,6 +109,13 @@ IF COL_LENGTH('dbo.rm_tender_search', 'search_text') IS NULL
             CONSTRAINT df_rm_tender_search_text DEFAULT N'';
 """
 
+RELAX_DRAFT_COLUMNS = """
+ALTER TABLE dbo.rm_tender_search ALTER COLUMN event_date DATE NULL;
+ALTER TABLE dbo.rm_tender_search ALTER COLUMN deadline DATETIME2 NULL;
+ALTER TABLE dbo.rm_tender_detail ALTER COLUMN event_date DATE NULL;
+ALTER TABLE dbo.rm_tender_detail ALTER COLUMN deadline DATETIME2 NULL;
+"""
+
 CREATE_SEARCH_LOOKUP_INDEX = """
 IF NOT EXISTS (
     SELECT 1 FROM sys.indexes WHERE name = 'ix_rm_tender_search_lookup'
@@ -129,7 +136,7 @@ class DashboardEntry:
     organizer_id: str
     name: str
     status: str
-    deadline: datetime
+    deadline: datetime | None
     bid_count: int
 
 
@@ -139,9 +146,9 @@ class TenderSummary:
     organizer_id: str
     name: str
     event_type: str
-    event_date: date
+    event_date: date | None
     region: str
-    deadline: datetime
+    deadline: datetime | None
     status: str
     alpha: Decimal
     budget_amount: int
@@ -228,7 +235,7 @@ class InMemoryTendersProjection:
 
     def dashboard_for(self, organizer_id: str) -> list[DashboardEntry]:
         rows = [row for row in self._dashboard.values() if row.organizer_id == organizer_id]
-        rows.sort(key=lambda row: (row.deadline, row.name))
+        rows.sort(key=_dashboard_sort)
         return rows
 
     def increment_bid_count(self, tender_id: str) -> None:
@@ -265,14 +272,18 @@ class InMemoryTendersProjection:
                 continue
             if region_key is not None and row.region.casefold() != region_key:
                 continue
-            if criteria.event_date_from is not None and row.event_date < criteria.event_date_from:
+            if criteria.event_date_from is not None and (
+                row.event_date is None or row.event_date < criteria.event_date_from
+            ):
                 continue
-            if criteria.event_date_to is not None and row.event_date > criteria.event_date_to:
+            if criteria.event_date_to is not None and (
+                row.event_date is None or row.event_date > criteria.event_date_to
+            ):
                 continue
             if not keyword_matches(self._search_text.get(tender_id, ""), criteria.keyword):
                 continue
             matched.append(row)
-        matched.sort(key=lambda row: (row.event_date, row.name))
+        matched.sort(key=lambda row: (row.event_date is None, row.event_date or date.min, row.name))
         return matched
 
     def clear(self) -> None:
@@ -350,7 +361,8 @@ class SqlTendersProjection:
         cursor = self._conn.cursor()
         cursor.execute(
             "SELECT tender_id, organizer_id, name, status, deadline, bid_count "
-            "FROM dbo.rm_dashboard WHERE organizer_id = ? ORDER BY deadline, name",
+            "FROM dbo.rm_dashboard WHERE organizer_id = ? "
+            "ORDER BY CASE WHEN deadline IS NULL THEN 1 ELSE 0 END, deadline, name",
             organizer_id,
         )
         rows = [
@@ -466,6 +478,7 @@ def create_tenders_projection(conn: pyodbc.Connection) -> None:
     cursor.execute(CREATE_RM_REQUIREMENT)
     cursor.execute(ADD_SEARCH_TEXT)
     cursor.execute(CREATE_SEARCH_LOOKUP_INDEX)
+    cursor.execute(RELAX_DRAFT_COLUMNS)
     cursor.close()
 
 
@@ -495,19 +508,21 @@ def rebuild_tenders(store, tenders: TendersProjection) -> None:
 
 
 def _summary_from_created(tender_id: str, data: dict) -> TenderSummary:
-    budget = data["estimated_budget"]
+    budget = data.get("estimated_budget")
+    event_date = data.get("event_date")
+    deadline = data.get("deadline")
     return TenderSummary(
         tender_id=tender_id,
         organizer_id=data["organizer_id"],
         name=data["name"],
         event_type=data["event_type"],
-        event_date=date.fromisoformat(data["event_date"]),
-        region=data["region"],
-        deadline=_parse_timestamp(data["deadline"]),
+        event_date=date.fromisoformat(event_date) if event_date else None,
+        region=data.get("region") or "",
+        deadline=_parse_timestamp(deadline) if deadline else None,
         status=DRAFT,
         alpha=Decimal(data["alpha"]),
-        budget_amount=int(budget["amount"]),
-        budget_currency=str(budget["currency"]),
+        budget_amount=int(budget["amount"]) if budget else 0,
+        budget_currency=str(budget["currency"]) if budget else "ILS",
     )
 
 
@@ -576,8 +591,14 @@ def keyword_matches(document: str, keyword: str | None) -> bool:
     return all(token in folded for token in tokens)
 
 
+def _dashboard_sort(row: DashboardEntry) -> tuple:
+    if row.deadline is None:
+        return (1, datetime.max.replace(tzinfo=timezone.utc), row.name)
+    return (0, row.deadline, row.name)
+
+
 def initial_search_text(data: dict) -> str:
-    return f"{data['name']}\n{data['region']}".casefold()
+    return f"{data['name']}\n{data.get('region') or ''}".casefold()
 
 
 def requirement_search_text(data: dict) -> str:

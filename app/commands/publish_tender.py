@@ -19,17 +19,21 @@ from app.domain.tender import (
     CURRENCY,
     EVENT_TYPES,
     REQUIREMENT_TYPES,
+    DeadlineAfterEventError,
     InvalidAlphaError,
     InvalidBudgetError,
     InvalidEventTypeError,
     InvalidRequirementTypeError,
     InvalidTenderError,
     InvalidWeightError,
-    NoRequirementsError,
     NotTenderOwnerError,
     PastDeadlineError,
+    PastEventDateError,
+    RequirementState,
+    TenderState,
+    event_day_start,
+    israel_today,
     TenderNotFoundError,
-    WeightSumError,
     assert_can_publish,
     parse_alpha,
     parse_weight,
@@ -55,7 +59,7 @@ class PublishTender:
     event_type: str = ""
     event_date: date | None = None
     region: str = ""
-    budget_amount: int = 0
+    budget_amount: int | None = None
     budget_currency: str = CURRENCY
     deadline: datetime | None = None
     alpha: Decimal | str = Decimal("0.6")
@@ -146,35 +150,43 @@ def _created_payload(command: PublishTender, now: datetime) -> dict:
         raise InvalidTenderError("name is required")
     if command.event_type not in EVENT_TYPES:
         raise InvalidEventTypeError("event type must be culture or sports")
-    if not isinstance(command.event_date, date) or isinstance(command.event_date, datetime):
-        raise InvalidTenderError("event_date is required")
-    if not region or len(region) > 100:
-        raise InvalidTenderError("region is required")
-    if command.budget_currency != CURRENCY:
-        raise InvalidBudgetError("budget currency must be ILS")
-    if isinstance(command.budget_amount, bool) or not isinstance(command.budget_amount, int):
-        raise InvalidBudgetError("budget must be a positive number of agorot")
-    if command.budget_amount <= 0:
-        raise InvalidBudgetError("budget must be a positive number of agorot")
-    if command.deadline is None:
-        raise PastDeadlineError("deadline must be in the future")
-    deadline = _utc(command.deadline)
-    if deadline <= now:
-        raise PastDeadlineError("deadline must be in the future")
     try:
         alpha = parse_alpha(command.alpha)
     except InvalidAlphaError:
         raise
-    return {
+    payload: dict = {
         "name": name,
         "event_type": command.event_type,
-        "event_date": command.event_date.isoformat(),
-        "region": region,
-        "estimated_budget": {"amount": command.budget_amount, "currency": CURRENCY},
-        "deadline": deadline.isoformat(),
         "alpha": format(alpha, "f"),
         "organizer_id": organizer_id,
     }
+    if region:
+        if len(region) > 100:
+            raise InvalidTenderError("region is required")
+        payload["region"] = region
+    event_day = command.event_date
+    if event_day is not None:
+        if isinstance(event_day, datetime) or not isinstance(event_day, date):
+            raise InvalidTenderError("event_date is required")
+        if event_day < israel_today(now):
+            raise PastEventDateError("event date must be today or later")
+        payload["event_date"] = event_day.isoformat()
+    if command.budget_amount is not None:
+        if command.budget_currency != CURRENCY:
+            raise InvalidBudgetError("budget currency must be ILS")
+        if isinstance(command.budget_amount, bool) or not isinstance(command.budget_amount, int):
+            raise InvalidBudgetError("budget must be a positive number of agorot")
+        if command.budget_amount <= 0:
+            raise InvalidBudgetError("budget must be a positive number of agorot")
+        payload["estimated_budget"] = {"amount": command.budget_amount, "currency": CURRENCY}
+    if command.deadline is not None:
+        deadline = _utc(command.deadline)
+        if deadline <= now:
+            raise PastDeadlineError("deadline must be in the future")
+        if event_day is not None and deadline >= event_day_start(event_day):
+            raise DeadlineAfterEventError("deadline must be before the event date")
+        payload["deadline"] = deadline.isoformat()
+    return payload
 
 
 def _requirement_payload(spec: RequirementSpec) -> dict:
@@ -184,7 +196,7 @@ def _requirement_payload(spec: RequirementSpec) -> dict:
     if not isinstance(spec.is_threshold, bool):
         raise InvalidTenderError("is_threshold must be true or false")
     description = spec.description.strip()
-    if not description or len(description) > 4000:
+    if len(description) > 4000:
         raise InvalidTenderError("description is required")
     return {
         "requirement_id": str(uuid.uuid4()),
@@ -196,13 +208,32 @@ def _requirement_payload(spec: RequirementSpec) -> dict:
 
 
 def _assert_new_tender_can_publish(created: dict, requirements: list[dict], now: datetime) -> None:
-    if not requirements:
-        raise NoRequirementsError("a tender cannot be published with zero requirements")
-    total = sum(item["weight"] for item in requirements)
-    if total != 100:
-        raise WeightSumError(total)
-    if datetime.fromisoformat(created["deadline"]) <= now:
-        raise PastDeadlineError("deadline must still be in the future")
+    budget = created.get("estimated_budget") or {}
+    event_date = created.get("event_date")
+    deadline = created.get("deadline")
+    state = TenderState(
+        tender_id="pending",
+        name=created["name"],
+        event_type=created["event_type"],
+        event_date=date.fromisoformat(event_date) if event_date else None,
+        region=created.get("region") or "",
+        budget_amount=int(budget["amount"]) if budget else 0,
+        budget_currency=str(budget["currency"]) if budget else "",
+        deadline=datetime.fromisoformat(deadline) if deadline else None,
+        alpha=Decimal(created["alpha"]),
+        organizer_id=created["organizer_id"],
+        requirements=tuple(
+            RequirementState(
+                requirement_id=item["requirement_id"],
+                requirement_type=item["type"],
+                weight=item["weight"],
+                is_threshold=item["is_threshold"],
+                description=item["description"],
+            )
+            for item in requirements
+        ),
+    )
+    assert_can_publish(state, now)
 
 
 def _utc(value: datetime | None) -> datetime:

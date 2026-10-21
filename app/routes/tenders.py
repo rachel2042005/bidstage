@@ -31,10 +31,12 @@ from app.domain.tender import (
     InvalidEventTypeError,
     InvalidRequirementTypeError,
     InvalidTenderError,
+    DeadlineAfterEventError,
     InvalidWeightError,
     NoRequirementsError,
     NotTenderOwnerError,
     PastDeadlineError,
+    PastEventDateError,
     TenderAlreadyPublishedError,
     TenderNotFoundError,
     WeightSumError,
@@ -209,7 +211,7 @@ def _command_from_form(form, organizer_id: str) -> PublishTender:
         region=form.get("region", ""),
         budget_amount=_parse_budget(form.get("budget", "")),
         deadline=_parse_deadline(form.get("deadline", "")),
-        alpha=form.get("alpha", ""),
+        alpha=form.get("alpha", "").strip() or "0.6",
         requirements=_parse_requirement_rows(form),
         publish=form.get("intent") == "publish",
     )
@@ -243,16 +245,22 @@ def _parse_requirement_rows(form) -> tuple[RequirementSpec, ...]:
     return tuple(specs)
 
 
-def _parse_date(value: str) -> date:
+def _parse_date(value: str) -> date | None:
+    text = value.strip()
+    if not text:
+        return None
     try:
-        return date.fromisoformat(value.strip())
+        return date.fromisoformat(text)
     except ValueError as exc:
         raise InvalidTenderError("event_date is required") from exc
 
 
-def _parse_deadline(value: str) -> datetime:
+def _parse_deadline(value: str) -> datetime | None:
+    text = value.strip()
+    if not text:
+        return None
     try:
-        parsed = datetime.fromisoformat(value.strip())
+        parsed = datetime.fromisoformat(text)
     except ValueError as exc:
         raise InvalidTenderError("deadline is required") from exc
     if parsed.tzinfo is None:
@@ -260,10 +268,10 @@ def _parse_deadline(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _parse_budget(value: str) -> int:
+def _parse_budget(value: str) -> int | None:
     cleaned = value.strip().replace(",", "").replace("₪", "").replace(" ", "")
     if not cleaned:
-        raise InvalidBudgetError("budget is required")
+        return None
     try:
         amount = Decimal(cleaned)
     except InvalidOperation as exc:
@@ -298,6 +306,10 @@ def _flash_domain_error(exc: DomainError) -> None:
         flash(f"המשקלות מסתכמים ב-{exc.total} ולא ב-100.", "danger")
     elif isinstance(exc, PastDeadlineError):
         flash("מועד ההגשה חייב להיות בעתיד.", "danger")
+    elif isinstance(exc, PastEventDateError):
+        flash("תאריך האירוע חייב להיות היום או מאוחר יותר.", "danger")
+    elif isinstance(exc, DeadlineAfterEventError):
+        flash("מועד ההגשה חייב להיות לפני תאריך האירוע.", "danger")
     elif isinstance(exc, NoRequirementsError):
         flash("לא ניתן לפרסם מכרז בלי דרישות.", "danger")
     elif isinstance(exc, InvalidEventTypeError):

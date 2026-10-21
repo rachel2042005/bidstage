@@ -86,10 +86,10 @@ Administrator role and supplier approval workflow; payment or contracting after 
 
 | ID | Requirement |
 | --- | --- |
-| `FR-ENT-1` | An organizer can create a tender with name, type, event date, region, estimated budget, submission deadline and α. |
+| `FR-ENT-1` | An organizer can save a draft with a name and event type. Region, budget, event date, deadline, and a requirement description may be absent. α defaults to 0.6. |
 | `FR-ENT-2` | An organizer can add requirements to a draft tender, each with type, weight and threshold flag. |
 | `FR-ENT-3` | A tender cannot be published unless its requirement weights sum to exactly 100%. |
-| `FR-ENT-4` | A tender cannot be published with zero requirements, or with a deadline in the past. |
+| `FR-ENT-4` | A tender cannot be published with zero requirements, an empty requirement description, a missing region or budget, a deadline in the past, an event date before today in Asia/Jerusalem, or a deadline that is not before the start of the event date. |
 | `FR-ENT-5` | A supplier can submit a bid containing a response to **every** requirement, a free-text concept, and a price. Partial bids are rejected. |
 | `FR-ENT-6` | A bid price is sealed on submission and is not readable by anyone — organizer or agent — until prices are revealed. |
 | `FR-ENT-7` | A supplier can withdraw their bid while the tender is still open for bids, and not after. |

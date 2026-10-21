@@ -10,13 +10,13 @@
 <h1 class="h3">{{ details.tender.name }}</h1>
 <dl class="row">
   <dt class="col-sm-3">אזור</dt>
-  <dd class="col-sm-9">{{ details.tender.region }}</dd>
+  <dd class="col-sm-9">{% if details.tender.region %}{{ details.tender.region }}{% else %}טרם נקבע{% endif %}</dd>
   <dt class="col-sm-3">תאריך האירוע</dt>
-  <dd class="col-sm-9"><span class="ltr-numeric">{{ details.tender.event_date|event_day }}</span></dd>
+  <dd class="col-sm-9">{% if details.tender.event_date %}<span class="ltr-numeric">{{ details.tender.event_date|event_day }}</span>{% else %}טרם נקבע{% endif %}</dd>
   <dt class="col-sm-3">מועד אחרון להגשה</dt>
-  <dd class="col-sm-9"><span class="ltr-numeric">{{ details.tender.deadline|local_dt }}</span></dd>
+  <dd class="col-sm-9">{% if details.tender.deadline %}<span class="ltr-numeric">{{ details.tender.deadline|local_dt }}</span>{% else %}טרם נקבע{% endif %}</dd>
   <dt class="col-sm-3">תקציב משוער</dt>
-  <dd class="col-sm-9"><span class="ltr-numeric">₪{{ details.tender.budget_amount|shekels }}</span></dd>
+  <dd class="col-sm-9">{% if details.tender.budget_amount %}<span class="ltr-numeric">₪{{ details.tender.budget_amount|shekels }}</span>{% else %}טרם נקבע{% endif %}</dd>
   <dt class="col-sm-3">משקל איכות α</dt>
   <dd class="col-sm-9"><span class="ltr-numeric">{{ details.tender.alpha|alpha_pct }}</span> איכות, <span class="ltr-numeric">{{ details.tender.alpha|price_pct }}</span> מחיר</dd>
   {% if bid_count is defined %}
@@ -127,7 +127,7 @@
     </div>
     <div class="col-12">
       <label class="form-label" for="description">תיאור</label>
-      <textarea class="form-control" id="description" name="description" rows="2" required></textarea>
+      <textarea class="form-control" id="description" name="description" rows="2"></textarea>
     </div>
   </div>
   <button type="submit" class="btn btn-outline-primary mt-3">הוספת דרישה</button>

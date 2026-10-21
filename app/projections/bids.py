@@ -235,7 +235,7 @@ BEGIN
         organizer_id  VARCHAR(100)  NOT NULL,
         name          NVARCHAR(200) NOT NULL,
         status        VARCHAR(30)   NOT NULL,
-        deadline      DATETIME2     NOT NULL,
+        deadline      DATETIME2     NULL,
         bid_count     INT           NOT NULL,
         CONSTRAINT pk_rm_dashboard PRIMARY KEY (tender_id)
     );
@@ -251,6 +251,7 @@ IF COL_LENGTH('dbo.rm_dashboard', 'status') IS NULL
     ALTER TABLE dbo.rm_dashboard ADD status VARCHAR(30) NULL;
 IF COL_LENGTH('dbo.rm_dashboard', 'deadline') IS NULL
     ALTER TABLE dbo.rm_dashboard ADD deadline DATETIME2 NULL;
+ALTER TABLE dbo.rm_dashboard ALTER COLUMN deadline DATETIME2 NULL;
 """
 
 CREATE_RM_BID_RANKING = """
