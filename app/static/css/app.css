@@ -1,7 +1,102 @@
-/* Hebrew RTL overrides on top of bootstrap.rtl.min.css (NFR-UI-1). */
+/* Hebrew RTL polish on top of bootstrap.rtl.min.css (NFR-UI-1). */
+
+:root {
+  --bs-primary: #0f6e6e;
+  --bs-primary-rgb: 15, 110, 110;
+  --bs-link-color: #0f6e6e;
+  --bs-link-hover-color: #0c5858;
+  --app-ink: #1b3a4b;
+  --app-page: #f4f7f8;
+  --app-line: #e4ecee;
+  --app-card-shadow: 0 10px 28px rgba(27, 58, 75, 0.08);
+}
 
 body {
   font-family: "Segoe UI", "Arial Hebrew", Arial, sans-serif;
+  background: var(--app-page);
+  color: var(--app-ink);
+}
+
+h1, h2, .navbar-brand {
+  letter-spacing: -0.01em;
+}
+
+.app-navbar {
+  background: var(--app-ink);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.app-navbar .nav-link,
+.app-navbar .navbar-brand,
+.app-navbar .navbar-text {
+  color: #f4f7f8;
+}
+
+.app-navbar .nav-link {
+  margin-inline-start: 0.35rem;
+}
+
+.app-navbar .nav-link:hover,
+.app-navbar .nav-link:focus {
+  color: #ffffff;
+}
+
+.btn-primary {
+  --bs-btn-bg: #0f6e6e;
+  --bs-btn-border-color: #0f6e6e;
+  --bs-btn-hover-bg: #0c5858;
+  --bs-btn-hover-border-color: #0c5858;
+  --bs-btn-active-bg: #0a4a4a;
+  --bs-btn-active-border-color: #0a4a4a;
+}
+
+.btn-outline-primary {
+  --bs-btn-color: #0f6e6e;
+  --bs-btn-border-color: #0f6e6e;
+  --bs-btn-hover-bg: #0f6e6e;
+  --bs-btn-hover-border-color: #0f6e6e;
+  --bs-btn-active-bg: #0c5858;
+  --bs-btn-active-border-color: #0c5858;
+}
+
+.card {
+  border: 0;
+  border-radius: 1rem;
+  box-shadow: var(--app-card-shadow);
+}
+
+.card .list-group-item {
+  border-color: var(--app-line);
+}
+
+.form-control,
+.form-select {
+  border-color: #d5e0e3;
+}
+
+.form-control:focus,
+.form-select:focus {
+  border-color: #0f6e6e;
+  box-shadow: 0 0 0 0.2rem rgba(15, 110, 110, 0.16);
+}
+
+.table {
+  --bs-table-color: var(--app-ink);
+}
+
+.table thead th {
+  color: #5c6b73;
+  font-weight: 600;
+  border-bottom-color: var(--app-line);
+}
+
+.table-warning {
+  --bs-table-bg: #fff4ea;
+  --bs-table-color: #7a3e12;
+}
+
+.bid-form {
+  border-top: 4px solid #0f6e6e;
 }
 
 /* Prices, scores and dates stay LTR inside RTL text so digits and currency

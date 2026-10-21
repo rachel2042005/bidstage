@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}{{ details.tender.name }} · BidStage{% endblock %}
+{% block content %}
+<p class="mb-2"><a href="{{ back_url }}">{{ back_label }}</a></p>
+<div class="card card-body mb-4">
+<p class="mb-1">
+  <span class="badge text-bg-secondary">{{ status_labels[details.tender.status] }}</span>
+  {{ event_type_labels[details.tender.event_type] }}
+</p>
+<h1 class="h3">{{ details.tender.name }}</h1>
+<dl class="row">
+  <dt class="col-sm-3">אזור</dt>
+  <dd class="col-sm-9">{% if details.tender.region %}{{ details.tender.region }}{% else %}טרם נקבע{% endif %}</dd>
+  <dt class="col-sm-3">תאריך האירוע</dt>
+  <dd class="col-sm-9">{% if details.tender.event_date %}<span class="ltr-numeric">{{ details.tender.event_date|event_day }}</span>{% else %}טרם נקבע{% endif %}</dd>
+  <dt class="col-sm-3">מועד אחרון להגשה</dt>
+  <dd class="col-sm-9">{% if details.tender.deadline %}<span class="ltr-numeric">{{ details.tender.deadline|local_dt }}</span>{% else %}טרם נקבע{% endif %}</dd>
+  <dt class="col-sm-3">תקציב משוער</dt>
+  <dd class="col-sm-9">{% if details.tender.budget_amount %}<span class="ltr-numeric">₪{{ details.tender.budget_amount|shekels }}</span>{% else %}טרם נקבע{% endif %}</dd>
+  <dt class="col-sm-3">משקל איכות α</dt>
+  <dd class="col-sm-9"><span class="ltr-numeric">{{ details.tender.alpha|alpha_pct }}</span> איכות, <span class="ltr-numeric">{{ details.tender.alpha|price_pct }}</span> מחיר</dd>
+  {% if bid_count is defined %}
+  <dt class="col-sm-3">הצעות שהתקבלו</dt>
+  <dd class="col-sm-9"><span class="ltr-numeric" id="bid-count">{{ bid_count }}</span></dd>
+  {% endif %}
+</dl>
+{% if can_close %}
+<form method="post" action="{{ url_for('comparison.close', tender_id=details.tender.tender_id) }}" class="mb-3">
+  <button type="submit" class="btn btn-outline-danger">סגירה להצעות</button>
+</form>
+{% endif %}
+{% if show_comparison %}
+<p>
+  <a href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id) }}">טבלת השוואה</a>
+  · <a href="{{ url_for('bid_search.organizer_search', tender_id=details.tender.tender_id) }}">חיפוש בהצעות</a>
+</p>
+{% endif %}
+</div>
+
+<h2 class="h5">קריטריוני הערכה</h2>
+<p class="text-muted">ציון האיכות הוא סכום משוקלל של הדרישות. סכום המשקלות במכרז שפורסם הוא 100%.</p>
+{% if details.requirements %}
+<div class="card mb-3">
+<div class="table-responsive">
+<table class="table align-middle mb-0">
+  <thead>
+    <tr>
+      <th>סוג</th>
+      <th>משקל</th>
+      <th>תנאי סף</th>
+      <th>תיאור</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for requirement in details.requirements %}
+    <tr>
+      <td>{{ requirement_type_labels[requirement.requirement_type] }}</td>
+      <td>
+        <span class="ltr-numeric">{{ requirement.weight }}%</span>
+        <div class="progress mt-1" style="height: 0.4rem;">
+          <div class="progress-bar" style="width: {{ requirement.weight }}%"></div>
+        </div>
+      </td>
+      <td>{% if requirement.is_threshold %}<span class="badge text-bg-warning">תנאי סף</span>{% else %}לא{% endif %}</td>
+      <td>{{ requirement.description }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+</div>
+<p>סכום משקלות: <span class="ltr-numeric">{{ details.weight_total }}%</span></p>
+{% else %}
+<p>עדיין אין דרישות.</p>
+{% endif %}
+
+{% if can_bid %}
+<hr>
+<h2 class="h5">הגשת הצעה</h2>
+<p class="text-muted">המחיר נשמר במעטפה חתומה ואינו מוצג למארגן.</p>
+<form method="post" action="{{ url_for('bids.submit', tender_id=details.tender.tender_id) }}" class="card card-body bid-form mb-3">
+  <div class="mb-3">
+    <label class="form-label" for="concept">קונספט</label>
+    <textarea class="form-control" id="concept" name="concept" rows="4" required></textarea>
+  </div>
+  {% for requirement in details.requirements %}
+  <div class="mb-3">
+    <label class="form-label" for="answer_{{ requirement.requirement_id }}">מענה: {{ requirement_type_labels[requirement.requirement_type] }}</label>
+    <p class="small text-muted mb-1">{{ requirement.description }}</p>
+    <textarea class="form-control" id="answer_{{ requirement.requirement_id }}" name="answer_{{ requirement.requirement_id }}" rows="3" required></textarea>
+  </div>
+  {% endfor %}
+  <div class="mb-3">
+    <label class="form-label" for="price">מחיר מוצע (₪)</label>
+    <input class="form-control ltr-numeric" id="price" name="price" inputmode="decimal" required>
+  </div>
+  <button type="submit" class="btn btn-primary">שליחת הצעה</button>
+</form>
+{% elif own_bid %}
+<p>ההצעה הוגשה למכרז זה.</p>
+{% endif %}
+
+{% if can_edit %}
+<hr>
+<h2 class="h5">הוספת דרישה</h2>
+<form method="post" action="{{ url_for('tenders.add_tender_requirement', tender_id=details.tender.tender_id) }}" class="card card-body shadow-sm mb-3">
+  <div class="row g-3">
+    <div class="col-md-4">
+      <label class="form-label" for="requirement_type">סוג דרישה</label>
+      <select class="form-select" id="requirement_type" name="requirement_type" required>
+        <option value="" disabled selected>בחרו</option>
+        {% for value, label in requirement_type_labels.items() %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label" for="weight">משקל %</label>
+      <input class="form-control ltr-numeric" id="weight" name="weight" inputmode="numeric" required>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label" for="is_threshold">תנאי סף</label>
+      <select class="form-select" id="is_threshold" name="is_threshold">
+        <option value="0" selected>לא</option>
+        <option value="1">כן</option>
+      </select>
+    </div>
+    <div class="col-12">
+      <label class="form-label" for="description">תיאור</label>
+      <textarea class="form-control" id="description" name="description" rows="2"></textarea>
+    </div>
+  </div>
+  <button type="submit" class="btn btn-outline-primary mt-3">הוספת דרישה</button>
+</form>
+<form method="post" action="{{ url_for('tenders.publish_existing', tender_id=details.tender.tender_id) }}">
+  <button type="submit" class="btn btn-primary">פרסום מכרז</button>
+</form>
+{% endif %}
+{% endblock %}

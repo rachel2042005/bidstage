@@ -106,7 +106,14 @@ app/
   infrastructure/
     vector_store.py           # Chroma adapter — the only chromadb import
     embeddings.py             # OpenAI / Ollama embedding providers
+  projections/                # read models, incl. rm_user
+  routes/
+    auth.py                   # /register, /login, /logout
+    access.py                 # login_required, require_role
+    pages.py                  # home + role-gated placeholders
+  domain/                     # aggregates (pure replay), scoring
   templates/base.html         # Hebrew RTL shell
+  templates/auth/             # registration and login forms
   static/css/app.css
 agent/
   runner.py                   # python -m agent.runner; starts run_forever once the queue exists
@@ -131,6 +138,7 @@ tests/
   smoke_test_vector_store.py
   test_semantic_search_service.py
   test_mcp_server.py
+  test_auth.py
 specs/
 README.md                     # setup and the three-process startup order
 ```
@@ -159,13 +167,25 @@ Steps 3 and 4 share one transaction, so a read model can never reflect an event 
 
 ### Commands
 
-`PublishTender` · `AddRequirement` · `SubmitBid` · `WithdrawBid` · `CloseTender` · `ScoreRequirement` · `RevealPrices` · `OverrideScore` · `SelectWinner` · `CancelTender`
+`RegisterUser` · `AuthenticateUser` · `PublishTender` · `AddRequirement` · `SubmitBid` · `WithdrawBid` · `CloseTender` · `ScoreRequirement` · `RevealPrices` · `OverrideScore` · `SelectWinner` · `CancelTender`
 
 `ScoreRequirement` is issued by the agent through `submit_requirement_score`; the rest originate from the UI. `RevealPrices` is issued by the web process only — never the agent. `SqlScoreRequirementHandler` appends `RequirementScored` on the bid stream and inserts one `rm_requirement_score` row in that same transaction (`T-CMD-20`). Weight is copied from `rm_requirement`. A second command for the same `(bid_id, requirement_id)` appends nothing and returns the stored version (`T-AG-4`). The handler rejects a bid with no `BidSubmitted`, a tender with no `TenderClosedForBids` (`T-INV-2`), and a tender that has `PricesRevealed`, `TenderFailed`, or `TenderCancelled` (`T-INV-4`). It does not read `price_amount`.
 
 `CompleteAssessment` is the in-process command behind `run_once`. Its SQL handler appends `QualityAssessmentCompleted` or `BidDisqualified` on the bid stream and, in that same transaction, projects `rm_bid_assessment`. A qualified completion inserts one `rm_requirement_score` row per requirement in the payload only when that `(bid_id, requirement_id)` is absent (`T-CMD-13`, `T-CMD-21`). An intermediate score already stored by `SqlScoreRequirementHandler` is left as it is. The handler does not read `PriceOfferSealed`. A bid stream that already has either terminal event rejects a second completion (`T-CMD-15`).
 
 `RevealPrices` replays the tender stream and every bid stream whose `BidSubmitted` names that tender. A bid that is not `QualityAssessmentCompleted` or `BidDisqualified` rejects the command and appends nothing (`INV-3`, `T-CMD-16`). When at least one bid is qualified, the handler loads `alpha` from `TenderCreated`, each qualified bid's `price_amount` from `PriceOfferSealed`, and `submitted_at` from `BidSubmitted.created_at`, calls `rank_bids`, and appends `PricesRevealed` then `FinalRankingCalculated`. It projects `rm_bid_ranking` for those qualified bids only. When every bid is terminal and none is qualified, it appends `TenderFailed` with `reason` `no_qualified_bids` and does not append `PricesRevealed` (`T-CMD-18`).
+
+There is no `UserRoleAssigned` command or event. Role is a field of `UserRegistered` and is immutable (`FR-AUTH-1`). An attempt to change it after registration is rejected (`T-AUTH-7`).
+
+`RegisterUser` and `AuthenticateUser` return a `user_id`. Session fields (email, display name, role) are loaded afterwards with `GetUserById` from `rm_user`. Failed logins emit nothing.
+
+### Identity and sessions
+
+The web process uses a Flask signed session cookie (`FLASK_SECRET_KEY`), not JWT. The cookie holds `user_id`, `email`, `display_name` and `role`.
+
+`@require_role("organizer")` / `@require_role("supplier")` live in `app/routes/access.py`. Unauthenticated requests to a gated route redirect to `/login`. A signed-in user with the wrong role receives 403 and no resource content (`FR-AUTH-4`, `T-AUTH-2`).
+
+`rm_user` is the login and authorization lookup (`NFR-CQRS-2`): `user_id`, unique case-insensitive `email`, `display_name`, `role` (`organizer` | `supplier`), `password_hash`, `registered_at`, `last_login_at`. The password column is a salted hash only (`FR-AUTH-2`). `init_db.py` creates this table next to `dbo.events`.
 
 ---
 
@@ -181,12 +201,14 @@ A query handler that opens the events table is a defect (`NFR-CQRS-2`).
 
 | Query | Read model |
 | --- | --- |
+| `GetUserByEmail` / `GetUserById` | `rm_user` |
 | `SearchTenders` | `rm_tender_search` |
 | `GetTenderDetails` | `rm_tender_detail`, `rm_requirement` |
 | `GetBidComparison` | `rm_bid_ranking` |
 | `GetDashboardStats` | `rm_dashboard` |
 | `GetBidAssessment` | `rm_requirement_score` |
 | `GetTenderRequirements` | `rm_tender_detail`, `rm_requirement`, approved-hosts reference table |
+| `SearchOrganizerBids` | `rm_dashboard` for the organizer's under-evaluation, decided and failed tenders; `rm_bid_ranking` for the supplier name; the excerpt comes from the bid search port, which is called with those tender ids and never sees a price |
 
 `rm_dashboard` holds bid counts and status per tender so `FR-DASH-5` holds. Deadline countdowns are rendered client-side from the stored deadline; the server stores no ticking value.
 
@@ -263,7 +285,7 @@ Naming is snake_case throughout and the table is `dbo.events`.
 
 **Size.** Somee's free tier allows 30 MB (`ENV-2`). A tender with five requirements and four bids produces roughly 45 events; justifications dominate the payload at ~1–2 KB each, so a complete tender costs well under 100 KB. The cap permits hundreds of tenders, provided embeddings stay out (`ENV-3`).
 
-Stream identity: one stream per tender, and one per bid. Requirement scores belong to the bid stream.
+Stream identity: one stream per user, one per tender, and one per bid. Requirement scores belong to the bid stream. User identity for login is served by `rm_user` (email and role), never by replaying the user stream on each request.
 
 ---
 

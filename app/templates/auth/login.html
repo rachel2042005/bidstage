@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}כניסה · BidStage{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-6 col-lg-5">
+    <h1 class="h3 mb-3">כניסה</h1>
+    <form method="post" action="{{ url_for('auth.login_submit') }}" class="card card-body shadow-sm">
+      <div class="mb-3">
+        <label for="email" class="form-label">דוא״ל</label>
+        <input class="form-control" type="email" id="email" name="email" required autocomplete="username">
+      </div>
+      <div class="mb-3">
+        <label for="password" class="form-label">סיסמה</label>
+        <input class="form-control" type="password" id="password" name="password" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-primary">כניסה</button>
+    </form>
+    <p class="mt-3">אין חשבון? <a href="{{ url_for('auth.register_form') }}">הרשמה</a></p>
+  </div>
+</div>
+{% endblock %}

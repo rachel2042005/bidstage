@@ -22,6 +22,9 @@ import pyodbc  # noqa: E402
 from app.config import ConfigError, load_settings  # noqa: E402
 from app.events.db import available_sql_server_drivers, transaction  # noqa: E402
 from app.events.schema import create_schema, describe_columns, table_exists  # noqa: E402
+from app.projections.bids import create_bids_projection  # noqa: E402
+from app.projections.tenders import create_tenders_projection  # noqa: E402
+from app.projections.users import create_users_projection  # noqa: E402
 
 _ROW_COUNT = "SELECT COUNT(*) FROM dbo.events"
 
@@ -53,6 +56,9 @@ def main() -> int:
         with transaction() as conn:
             existed = table_exists(conn)
             create_schema(conn)
+            create_users_projection(conn)
+            create_tenders_projection(conn)
+            create_bids_projection(conn)
 
             cursor = conn.cursor()
             cursor.execute(_ROW_COUNT)

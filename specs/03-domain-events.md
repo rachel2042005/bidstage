@@ -10,6 +10,7 @@ The event stream is the system of record. Everything else — read models, dashb
 
 | Stream | `StreamId` | Lifetime |
 | --- | --- | --- |
+| User | `user-{uuid}` | Registration onwards (role never changes) |
 | Tender | Tender UUID | Creation to decided, failed or cancelled |
 | Bid | Bid UUID | Submission to qualified, disqualified or withdrawn |
 
@@ -21,13 +22,22 @@ Requirement scores live on the **bid** stream, not the tender stream. A bid's co
 
 ## 2. Event catalogue
 
+### User stream
+
+| Event | Payload | Emitted by | Preconditions |
+| --- | --- | --- | --- |
+| `UserRegistered` | `user_id`, `email`, `display_name`, `role`, `password_hash` | `RegisterUser` | `role` is `organizer` or `supplier`; email is unique (case-insensitive); password is hashed before the event is written. The plaintext password is never in `event_data`. |
+| `UserLoggedIn` | `user_id`, `logged_in_at` | `AuthenticateUser` | Credentials match the projected user. Failed attempts emit nothing. |
+
+Role is a field of `UserRegistered`, not a later `UserRoleAssigned` event. `FR-AUTH-1` makes the role immutable; a compensating role-change event would be a spec change, not a correction.
+
 ### Tender stream
 
 | Event | Payload | Emitted by | Preconditions |
 | --- | --- | --- | --- |
-| `TenderCreated` | `name`, `event_type`, `event_date`, `region`, `estimated_budget`, `deadline`, `alpha`, `organizer_id` | `PublishTender` (draft step) | `alpha` in `[0,1]`; `deadline` in the future |
-| `RequirementAdded` | `requirement_id`, `type`, `weight`, `is_threshold`, `description` | `AddRequirement` | Tender not yet published; `type` is one of the five; `0 < weight ≤ 100` |
-| `TenderPublished` | `published_at` | `PublishTender` | Weights sum to exactly 100; at least one requirement; deadline still future |
+| `TenderCreated` | `name`, `event_type`, `alpha`, `organizer_id`; `event_date`, `region`, `estimated_budget`, and `deadline` may be absent | `PublishTender` (draft step) | `name` and `event_type` are required; `alpha` defaults to `0.6` and stays in `[0,1]`. A supplied deadline must be after now. A supplied event date must be today or later in Asia/Jerusalem. When both dates are present, the deadline must be before the start of the event date in Asia/Jerusalem. An omitted date skips only that relationship. |
+| `RequirementAdded` | `requirement_id`, `type`, `weight`, `is_threshold`, `description` | `AddRequirement` | Tender not yet published; `type` is one of the five; `0 < weight ≤ 100`. `description` may be empty on a draft. |
+| `TenderPublished` | `published_at` | `PublishTender` | Weights sum to exactly 100; at least one requirement, each with a description; region, a positive ILS budget, event date, and deadline are all present; deadline still future and before the start of the event date in Asia/Jerusalem; event date is today or later in Asia/Jerusalem. An event dated today cannot be published, because no deadline is both still ahead and before the start of that day. |
 | `TenderClosedForBids` | `closed_at`, `bid_count` | `CloseTender` | Tender was published; deadline passed, or organizer closed it explicitly |
 | `PricesRevealed` | `prices: [{bid_id, amount}]` | `RevealPrices` | Every bid is in a terminal assessment state; at least one bid qualified |
 | `FinalRankingCalculated` | `ranking: [{bid_id, quality, price, price_score, final_score, rank}]` | `RevealPrices` / `OverrideScore` | Immediately follows `PricesRevealed` or an override |

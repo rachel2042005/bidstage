@@ -5,4 +5,6 @@ events table violates NFR-CQRS-2.
 
 Queries: SearchTenders, GetTenderDetails, GetBidComparison, GetDashboardStats,
 GetBidAssessment, GetTenderRequirements.
+Queries: GetUserByEmail, GetUserById, SearchTenders, GetTenderDetails,
+GetBidComparison, GetDashboardStats, GetBidAssessment, SearchOrganizerBids.
 """

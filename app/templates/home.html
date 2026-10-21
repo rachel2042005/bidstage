@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}BidStage{% endblock %}
+{% block content %}
+<h1 class="h3">BidStage</h1>
+<p>מערכת מכרזים לבחירת ספק הפקה לאירועי תרבות וספורט.</p>
+{% if current_user %}
+  <p>שלום {{ current_user.display_name }}
+    {% if current_user.role == 'organizer' %}(מארגן/ת){% else %}(ספק/ית){% endif %}
+  </p>
+  {% if current_user.role == 'organizer' %}
+    <a class="btn btn-primary" href="{{ url_for('pages.organizer_home') }}">אזור מארגן</a>
+  {% else %}
+    <a class="btn btn-primary" href="{{ url_for('pages.supplier_home') }}">אזור ספק</a>
+  {% endif %}
+{% else %}
+  <a class="btn btn-primary" href="{{ url_for('auth.register_form') }}">הרשמה</a>
+  <a class="btn btn-outline-secondary" href="{{ url_for('auth.login') }}">כניסה</a>
+{% endif %}
+{% endblock %}
