@@ -224,6 +224,52 @@ def test_register_form_creates_session(client):
         assert "user_id" in sess
 
 
+def test_short_password_returns_400_and_keeps_the_typed_fields(client, app):
+    response = client.post(
+        "/register",
+        data={
+            "email": "org@example.com",
+            "password": "short",
+            "display_name": "מארגנת",
+            "role": ORGANIZER,
+        },
+    )
+    body = response.get_data(as_text=True)
+    assert response.status_code == 400
+    assert "הסיסמה חייבת להכיל לפחות 8 תווים." in body
+    assert 'value="מארגנת"' in body
+    assert 'value="org@example.com"' in body
+    assert 'value="organizer" selected' in body
+    assert "short" not in body
+    store, users, _tenders, _bids = app.extensions["backend"]
+    assert store.read_all() == []
+    assert get_user_by_email(users, "org@example.com") is None
+
+
+def test_wrong_login_returns_401_and_keeps_the_typed_email(client, app):
+    client.post(
+        "/register",
+        data={
+            "email": "org@example.com",
+            "password": PLAINTEXT,
+            "display_name": "מארגנת",
+            "role": ORGANIZER,
+        },
+    )
+    client.get("/logout")
+    response = client.post(
+        "/login",
+        data={"email": "org@example.com", "password": "wrong-password"},
+    )
+    body = response.get_data(as_text=True)
+    assert response.status_code == 401
+    assert "דוא״ל או סיסמה שגויים." in body
+    assert 'value="org@example.com"' in body
+    assert "wrong-password" not in body
+    store, _users, _tenders, _bids = app.extensions["backend"]
+    assert USER_LOGGED_IN not in [event.event_type for event in store.read_all()]
+
+
 def test_login_logout_round_trip(client):
     client.post(
         "/register",

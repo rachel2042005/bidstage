@@ -92,7 +92,7 @@ def test_a_draft_rejects_a_past_date_a_late_deadline_and_a_zero_budget():
                 name="טקס פרסים",
                 event_type=CULTURE,
                 event_date=date(2026, 12, 1),
-                deadline=datetime(2026, 12, 1, 8, 0, tzinfo=timezone.utc),
+                deadline=datetime(2026, 12, 1, 22, 0, tzinfo=timezone.utc),
             ),
             now=NOW,
         )
@@ -240,33 +240,32 @@ def test_publish_form_explains_a_past_deadline_a_past_event_and_a_late_deadline(
     )
     late_deadline = client.post(
         "/organizer/tenders/new",
-        data={**fields, "event_date": "2026-12-01", "deadline": "2026-12-01T10:00"},
+        data={**fields, "event_date": "2026-12-01", "deadline": "2026-12-02T10:00"},
     )
     assert "מועד ההגשה חייב להיות בעתיד." in past_deadline.get_data(as_text=True)
     assert "תאריך האירוע חייב להיות היום או מאוחר יותר." in past_event.get_data(as_text=True)
-    assert "מועד ההגשה חייב להיות לפני תאריך האירוע." in late_deadline.get_data(as_text=True)
+    assert "מועד ההגשה חייב להיות לפני סוף יום האירוע." in late_deadline.get_data(as_text=True)
     assert 'value="טקס פרסים"' in late_deadline.get_data(as_text=True)
     store, _users, _tenders = backend
     assert store.read_all() == []
 
 
-def test_an_event_dated_today_cannot_be_published():
+def test_an_event_dated_today_publishes_when_the_deadline_is_later_today():
     store, _users, tenders = _backend()
-    with pytest.raises(DeadlineAfterEventError):
-        publish_tender(
-            store,
-            tenders,
-            PublishTender(
-                organizer_id=ORGANIZER_ID,
-                name="טקס פרסים",
-                event_type=CULTURE,
-                region="תל אביב",
-                budget_amount=50_000_000,
-                event_date=israel_today(NOW),
-                deadline=NOW + timedelta(hours=1),
-                requirements=(RequirementSpec(VENUE, 100, True, "אולם"),),
-                publish=True,
-            ),
-            now=NOW,
-        )
-    assert store.read_all() == []
+    tender_id = publish_tender(
+        store,
+        tenders,
+        PublishTender(
+            organizer_id=ORGANIZER_ID,
+            name="טקס פרסים",
+            event_type=CULTURE,
+            region="תל אביב",
+            budget_amount=50_000_000,
+            event_date=israel_today(NOW),
+            deadline=NOW + timedelta(hours=1),
+            requirements=(RequirementSpec(VENUE, 100, True, "אולם"),),
+            publish=True,
+        ),
+        now=NOW,
+    )
+    assert store.read_stream(tender_id)[-1].event_type == TENDER_PUBLISHED

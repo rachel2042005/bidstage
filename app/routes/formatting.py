@@ -20,6 +20,12 @@ def format_event_day(value: date | datetime) -> str:
     return value.strftime("%d.%m.%Y")
 
 
+def format_datetime_local(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(ISRAEL).strftime("%Y-%m-%dT%H:%M")
+
+
 def format_local_datetime(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)

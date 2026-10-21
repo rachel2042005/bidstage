@@ -211,6 +211,7 @@ The event stream tells the story of the tender from start to finish:
 
 ```
 TenderCreated
+  → TenderDetailsRevised (optional, while still a draft)
   → RequirementAdded (per requirement)
   → TenderPublished
   → BidSubmitted + PriceOfferSealed

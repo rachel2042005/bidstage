@@ -8,7 +8,7 @@ already satisfies FR-ENT-3 and FR-ENT-4.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -18,6 +18,7 @@ from app.events.event_types import (
     REQUIREMENT_ADDED,
     TENDER_CLOSED_FOR_BIDS,
     TENDER_CREATED,
+    TENDER_DETAILS_REVISED,
     TENDER_FAILED,
     TENDER_PUBLISHED,
     FINAL_RANKING_CALCULATED,
@@ -232,8 +233,8 @@ def assert_can_publish(state: TenderState, now: datetime) -> None:
         raise PastEventDateError("event date must be today or later")
     if any(not item.description.strip() for item in state.requirements):
         raise InvalidTenderError("description is required")
-    if state.deadline >= event_day_start(state.event_date):
-        raise DeadlineAfterEventError("deadline must be before the event date")
+    if state.deadline >= event_day_end(state.event_date):
+        raise DeadlineAfterEventError("deadline must be before the end of the event date")
 
 
 def apply_tender(state: TenderState, event: StoredEvent) -> TenderState:
@@ -243,6 +244,12 @@ def apply_tender(state: TenderState, event: StoredEvent) -> TenderState:
         if event.version != 1:
             raise IllegalEventOrderError("TenderCreated must be version 1")
         return _apply_created(event)
+    if event.event_type == TENDER_DETAILS_REVISED:
+        if not state.tender_id:
+            raise IllegalEventOrderError("TenderDetailsRevised before TenderCreated")
+        if state.published_at is not None:
+            raise IllegalEventOrderError("TenderDetailsRevised after TenderPublished")
+        return _apply_revised(state, event)
     if event.event_type == REQUIREMENT_ADDED:
         if not state.tender_id:
             raise IllegalEventOrderError("RequirementAdded before TenderCreated")
@@ -327,6 +334,21 @@ def _apply_created(event: StoredEvent) -> TenderState:
     )
 
 
+def _apply_revised(state: TenderState, event: StoredEvent) -> TenderState:
+    revised = _apply_created(event)
+    return _copy(
+        state,
+        name=revised.name,
+        event_type=revised.event_type,
+        event_date=revised.event_date,
+        region=revised.region,
+        budget_amount=revised.budget_amount,
+        budget_currency=revised.budget_currency,
+        deadline=revised.deadline,
+        alpha=revised.alpha,
+    )
+
+
 def _apply_requirement(state: TenderState, event: StoredEvent) -> TenderState:
     data = event.event_data
     requirement = RequirementState(
@@ -389,6 +411,11 @@ def israel_today(now: datetime) -> date:
 def event_day_start(event_date: date) -> datetime:
     local = datetime(event_date.year, event_date.month, event_date.day, tzinfo=_ISRAEL)
     return local.astimezone(timezone.utc)
+
+
+def event_day_end(event_date: date) -> datetime:
+    """First instant of the next calendar day in Asia/Jerusalem."""
+    return event_day_start(event_date + timedelta(days=1))
 
 
 def _as_utc(value: datetime) -> datetime:

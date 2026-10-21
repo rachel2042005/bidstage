@@ -96,7 +96,7 @@ def register_submit():
 def login():
     if session.get("user_id"):
         return redirect(url_for("pages.home"))
-    return render_template("auth/login.html")
+    return render_template("auth/login.html", form={})
 
 
 @bp.post("/login")
@@ -118,7 +118,7 @@ def login_submit():
         return redirect(url_for("pages.home"))
     except InvalidCredentialsError:
         flash("דוא״ל או סיסמה שגויים.", "danger")
-        return render_template("auth/login.html"), 401
+        return render_template("auth/login.html", form={"email": email}), 401
 
 
 @bp.get("/logout")

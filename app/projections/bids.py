@@ -30,6 +30,7 @@ from app.events.event_types import (
     REQUIREMENT_SCORED,
     SCORE_OVERRIDDEN,
     TENDER_CREATED,
+    TENDER_DETAILS_REVISED,
 )
 
 
@@ -250,8 +251,12 @@ IF COL_LENGTH('dbo.rm_dashboard', 'name') IS NULL
 IF COL_LENGTH('dbo.rm_dashboard', 'status') IS NULL
     ALTER TABLE dbo.rm_dashboard ADD status VARCHAR(30) NULL;
 IF COL_LENGTH('dbo.rm_dashboard', 'deadline') IS NULL
-    ALTER TABLE dbo.rm_dashboard ADD deadline DATETIME2 NULL;
-ALTER TABLE dbo.rm_dashboard ALTER COLUMN deadline DATETIME2 NULL;
+    EXEC(N'ALTER TABLE dbo.rm_dashboard ADD deadline DATETIME2 NULL');
+ELSE
+    EXEC(N'ALTER TABLE dbo.rm_dashboard ALTER COLUMN deadline DATETIME2 NULL');
+IF COL_LENGTH('dbo.rm_dashboard', 'bid_count') IS NULL
+    ALTER TABLE dbo.rm_dashboard ADD bid_count INT NOT NULL
+        CONSTRAINT df_rm_dashboard_bid_count DEFAULT 0;
 """
 
 CREATE_RM_BID_RANKING = """
@@ -445,6 +450,8 @@ class SqlBidsProjection:
 
 
 def create_bids_projection(conn: pyodbc.Connection) -> None:
+    from app.projections.schema_sync import ensure_read_model_schema
+
     cursor = conn.cursor()
     cursor.execute(CREATE_RM_BID_FOR_ASSESSMENT)
     cursor.execute(CREATE_RM_SUPPLIER_BID)
@@ -452,6 +459,7 @@ def create_bids_projection(conn: pyodbc.Connection) -> None:
     cursor.execute(ADD_DASHBOARD_COLUMNS)
     cursor.execute(CREATE_RM_BID_RANKING)
     cursor.close()
+    ensure_read_model_schema(conn)
 
 
 def rebuild_bids(store, bids: BidsProjection) -> None:
@@ -461,7 +469,7 @@ def rebuild_bids(store, bids: BidsProjection) -> None:
     pending = None
     pending_prices = None
     for event in store.read_all():
-        if event.event_type == TENDER_CREATED:
+        if event.event_type in (TENDER_CREATED, TENDER_DETAILS_REVISED):
             names[event.stream_id] = event.event_data["name"]
         elif event.event_type == BID_SUBMITTED:
             pending = event
