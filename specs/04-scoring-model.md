@@ -15,6 +15,8 @@ This is the part of the system a reviewer will probe hardest, so every value her
 
 The LLM contributes **only** the per-requirement integers. Every arithmetic step is ordinary code (`NFR-DET-1`), which is both a project rule and the reason the model below is reproducible.
 
+The venue sub-agent pins that integer to the band in `knowledge_base/rubrics/venue.md` when the model's own findings require it (`05-agent-spec.md` §5, `T-AG-13`, `T-AG-16`, `T-AG-17`). The content sub-agent pins the same way against `knowledge_base/rubrics/content.md` (`T-AG-21`, `T-AG-22`, `T-AG-23`). The experience sub-agent pins against `knowledge_base/rubrics/experience.md` (`T-AG-24`, `T-AG-25`, `T-AG-26`). Quality, price, and final score stay the formulas in §3–§5.
+
 ---
 
 ## 2. Rubric
@@ -30,7 +32,7 @@ One rubric per requirement type, stored unchunked in the `rubrics` collection (`
 | 1–2 | Barely addresses the requirement |
 | 0 | Not addressed, or a claim found to be false |
 
-Each rubric adds type-specific anchors — for `VENUE`, whether the official capacity was located and whether it satisfies both the tender figure and the regulatory limit; for `EXPERIENCE`, how many claimed productions were corroborated. A verified-false claim scores 0 regardless of presentation quality, which is what makes Tavily verification consequential rather than decorative.
+Each rubric adds type-specific anchors — for `VENUE`, whether the official capacity was located and whether it satisfies both the tender figure and the regulatory limit; for `CONTENT`, whether the schedule and the concept are both present and on-theme and whether a named performer or work was disproved; for `EXPERIENCE`, how many claimed productions were corroborated. A verified-false claim scores 0 regardless of presentation quality, which is what makes Tavily verification consequential rather than decorative.
 
 Every `RequirementScored` event records `rubric_version`, so a score remains explainable after a rubric changes (`03-domain-events.md` §6).
 
@@ -75,6 +77,8 @@ Computed only after `PricesRevealed`.
 \]
 
 \(P_{\min}^{\text{qualified}}\) is the lowest price among **qualified** bids only — those passing both gates in §4. A disqualified bid never influences another bid's price score, even when its price was lowest overall. Range is \((0, 100]\), reaching 100 only for the cheapest qualified bid.
+
+Both prices are integers greater than 0. A bool, zero, or a negative raises `ValueError` before the division (`T-SC-20`).
 
 ---
 
@@ -124,7 +128,7 @@ Lowest qualified price = ₪700,000.
 
 ### Variant: the cheapest bid is disqualified
 
-Add Supplier C at ₪500,000 who scores 4 on a threshold `VENUE` requirement. C is disqualified at the first gate and never scored further. \(P_{\min}^{\text{qualified}}\) stays ₪700,000, so A and B keep the scores above. Had C's price entered the pool, A would have dropped to 0.6(82) + 0.4(55.6) = 71.4 and B to 0.6(74) + 0.4(71.4) = 72.9 — both distorted by a bid that was never eligible. This is the concrete reason for the qualified-only boundary.
+Add Supplier C at ₪500,000 who scores 4 on a threshold `VENUE` requirement. C is disqualified at the first gate and never scored further. \(P_{\min}^{\text{qualified}}\) stays ₪700,000, so A and B keep the scores above. Had C's price entered the pool, the unrounded scores would be \(500/900 \times 100\) and \(500/700 \times 100\). Displayed to one decimal, A drops to 0.6(82) + 0.4(55.555…) = **71.4** and B to 0.6(74) + 0.4(71.428…) = **73.0** — both distorted by a bid that was never eligible. The one-decimal figure 72.9 does not come from either the unrounded formula or from rounding the price score to 71.4 first. This is the concrete reason for the qualified-only boundary.
 
 ---
 

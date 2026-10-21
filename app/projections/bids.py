@@ -197,9 +197,16 @@ BEGIN
     CREATE TABLE dbo.rm_bid_for_assessment (
         bid_id          VARCHAR(100)  NOT NULL,
         tender_id       VARCHAR(100)  NOT NULL,
+        supplier_id     VARCHAR(100)  NOT NULL,
         concept         NVARCHAR(MAX) NOT NULL,
         responses_json  NVARCHAR(MAX) NOT NULL,
-        CONSTRAINT pk_rm_bid_for_assessment PRIMARY KEY (bid_id)
+        status          VARCHAR(20)   NOT NULL,
+        queued_at       DATETIME2     NOT NULL
+            CONSTRAINT df_rm_bid_for_assessment_queued_at DEFAULT SYSUTCDATETIME(),
+        claimed_at      DATETIME2     NULL,
+        CONSTRAINT pk_rm_bid_for_assessment PRIMARY KEY (bid_id),
+        CONSTRAINT ck_rm_bid_for_assessment_status
+            CHECK (status IN ('pending', 'claimed', 'completed'))
     );
 END
 """
@@ -289,13 +296,15 @@ class SqlBidsProjection:
         responses_json = json.dumps(list(data["responses"]), ensure_ascii=False)
         cursor = self._conn.cursor()
         cursor.setinputsizes(
-            [None, None, (pyodbc.SQL_WVARCHAR, 0, 0), (pyodbc.SQL_WVARCHAR, 0, 0)]
+            [None, None, None, (pyodbc.SQL_WVARCHAR, 0, 0), (pyodbc.SQL_WVARCHAR, 0, 0)]
         )
         cursor.execute(
             "INSERT INTO dbo.rm_bid_for_assessment "
-            "(bid_id, tender_id, concept, responses_json) VALUES (?, ?, ?, ?)",
+            "(bid_id, tender_id, supplier_id, concept, responses_json, status) "
+            "VALUES (?, ?, ?, ?, ?, 'pending')",
             bid_id,
             data["tender_id"],
+            data["supplier_id"],
             data["concept"],
             responses_json,
         )
