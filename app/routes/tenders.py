@@ -9,6 +9,7 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, u
 
 from app.commands.add_requirement import AddRequirement, add_requirement
 from app.commands.publish_tender import PublishTender, RequirementSpec, publish_tender
+from app.commands.revise_tender_details import ReviseTenderDetails, revise_tender_details
 from app.domain.tender import (
     CANCELLED,
     CONTENT,
@@ -46,7 +47,7 @@ from app.domain.user import ORGANIZER, SUPPLIER
 from app.queries.get_bid import active_bid, bid_count
 from app.queries.get_tender import get_tender_details
 from app.routes.access import current_user_id, require_role
-from app.routes.formatting import ISRAEL
+from app.routes.formatting import ISRAEL, format_datetime_local
 from app.routes.services import unit_of_work
 
 bp = Blueprint("tenders", __name__)
@@ -114,6 +115,7 @@ def organizer_tender(tender_id: str):
         "tenders/detail.html",
         details=details,
         can_edit=details.tender.status == DRAFT,
+        edit_form=_stored_edit_form(details.tender),
         can_close=details.tender.status == OPEN,
         show_comparison=details.tender.status in {UNDER_EVALUATION, FAILED, DECIDED},
         bid_count=count,
@@ -145,6 +147,51 @@ def add_tender_requirement(tender_id: str):
         _flash_domain_error(exc)
         return redirect(url_for("tenders.organizer_tender", tender_id=tender_id))
     flash("הדרישה נוספה.", "success")
+    return redirect(url_for("tenders.organizer_tender", tender_id=tender_id))
+
+
+@bp.post("/organizer/tenders/<tender_id>/details")
+@require_role(ORGANIZER)
+def revise_details(tender_id: str):
+    organizer_id = current_user_id() or ""
+    try:
+        command = ReviseTenderDetails(
+            tender_id=tender_id,
+            organizer_id=organizer_id,
+            name=request.form.get("name", ""),
+            event_type=request.form.get("event_type", ""),
+            event_date=_parse_date(request.form.get("event_date", "")),
+            region=request.form.get("region", ""),
+            budget_amount=_parse_budget(request.form.get("budget", "")),
+            deadline=_parse_deadline(request.form.get("deadline", "")),
+            alpha=request.form.get("alpha", "").strip() or "0.6",
+        )
+        with unit_of_work() as (store, _users, tenders, _bids):
+            revise_tender_details(store, tenders, command)
+    except NotTenderOwnerError:
+        abort(403)
+    except TenderNotFoundError:
+        abort(404)
+    except TenderAlreadyPublishedError:
+        flash("אפשר לערוך רק טיוטה.", "danger")
+        return redirect(url_for("tenders.organizer_tender", tender_id=tender_id))
+    except DomainError as exc:
+        _flash_domain_error(exc)
+        details = _details_for_owner(tender_id)
+        with unit_of_work() as (_store, _users, _tenders, bids):
+            count = bid_count(bids, tender_id)
+        return render_template(
+            "tenders/detail.html",
+            details=details,
+            can_edit=True,
+            edit_form=request.form,
+            can_close=False,
+            show_comparison=False,
+            bid_count=count,
+            back_url=url_for("pages.organizer_home"),
+            back_label="חזרה למכרזים שלי",
+        ), 400
+    flash("הטיוטה עודכנה.", "success")
     return redirect(url_for("tenders.organizer_tender", tender_id=tender_id))
 
 
@@ -190,6 +237,21 @@ def supplier_tender(tender_id: str):
         back_url=url_for("pages.supplier_home"),
         back_label="חזרה למכרזים הפתוחים",
     )
+
+
+def _stored_edit_form(tender) -> dict:
+    budget = ""
+    if tender.budget_amount:
+        budget = format(Decimal(tender.budget_amount) / Decimal(100), "f")
+    return {
+        "name": tender.name,
+        "event_type": tender.event_type,
+        "event_date": tender.event_date.isoformat() if tender.event_date else "",
+        "region": tender.region,
+        "budget": budget,
+        "deadline": format_datetime_local(tender.deadline) if tender.deadline else "",
+        "alpha": format(tender.alpha, "f"),
+    }
 
 
 def _details_for_owner(tender_id: str):
@@ -309,7 +371,7 @@ def _flash_domain_error(exc: DomainError) -> None:
     elif isinstance(exc, PastEventDateError):
         flash("תאריך האירוע חייב להיות היום או מאוחר יותר.", "danger")
     elif isinstance(exc, DeadlineAfterEventError):
-        flash("מועד ההגשה חייב להיות לפני תאריך האירוע.", "danger")
+        flash("מועד ההגשה חייב להיות לפני סוף יום האירוע.", "danger")
     elif isinstance(exc, NoRequirementsError):
         flash("לא ניתן לפרסם מכרז בלי דרישות.", "danger")
     elif isinstance(exc, InvalidEventTypeError):

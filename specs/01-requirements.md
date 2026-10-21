@@ -89,11 +89,12 @@ Administrator role and supplier approval workflow; payment or contracting after 
 | `FR-ENT-1` | An organizer can save a draft with a name and event type. Region, budget, event date, deadline, and a requirement description may be absent. α defaults to 0.6. |
 | `FR-ENT-2` | An organizer can add requirements to a draft tender, each with type, weight and threshold flag. |
 | `FR-ENT-3` | A tender cannot be published unless its requirement weights sum to exactly 100%. |
-| `FR-ENT-4` | A tender cannot be published with zero requirements, an empty requirement description, a missing region or budget, a deadline in the past, an event date before today in Asia/Jerusalem, or a deadline that is not before the start of the event date. |
+| `FR-ENT-4` | A tender cannot be published with zero requirements, an empty requirement description, a missing region or budget, a deadline that is not still ahead, an event date before today in Asia/Jerusalem, or a deadline that is not before the end of the event date in Asia/Jerusalem. An event dated today can be published when the deadline is later today. |
 | `FR-ENT-5` | A supplier can submit a bid containing a response to **every** requirement, a free-text concept, and a price. Partial bids are rejected. |
 | `FR-ENT-6` | A bid price is sealed on submission and is not readable by anyone — organizer or agent — until prices are revealed. |
 | `FR-ENT-7` | A supplier can withdraw their bid while the tender is still open for bids, and not after. |
 | `FR-ENT-8` | A bid cannot be submitted after the deadline, and a supplier may hold at most one active bid per tender. |
+| `FR-ENT-9` | An organizer can revise a draft they own. The revision appends `TenderDetailsRevised` and the tender page shows the revised details. A published tender cannot be revised. Another organizer receives 403 and the stream is unchanged. |
 
 ### 2.7 Evaluation and award
 

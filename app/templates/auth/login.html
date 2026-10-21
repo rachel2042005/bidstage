@@ -7,7 +7,7 @@
     <form method="post" action="{{ url_for('auth.login_submit') }}" class="card card-body shadow-sm">
       <div class="mb-3">
         <label for="email" class="form-label">דוא״ל</label>
-        <input class="form-control" type="email" id="email" name="email" required autocomplete="username">
+        <input class="form-control" type="email" id="email" name="email" required autocomplete="username" value="{{ form.get('email', '') }}">
       </div>
       <div class="mb-3">
         <label for="password" class="form-label">סיסמה</label>

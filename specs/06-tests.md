@@ -91,6 +91,7 @@ One test per invariant in `03-domain-events.md` §3, each constructing an illega
 | --- | --- | --- |
 | `T-CMD-1` | `PublishTender` with weights at 100 | `TenderPublished` appended; search read model updated |
 | `T-CMD-2` | `PublishTender` with a past deadline | Rejected (`FR-ENT-4`) |
+| `T-CMD-13` | `ReviseTenderDetails` on a draft the organizer owns | `TenderDetailsRevised` appended; the read model shows the new details. A published tender and another organizer are rejected (`FR-ENT-9`) |
 | `T-CMD-3` | `SubmitBid` missing one requirement response | Rejected (`FR-ENT-5`) |
 | `T-CMD-4` | `SubmitBid` | `BidSubmitted` and `PriceOfferSealed` in one transaction |
 | `T-CMD-5` | `SubmitBid` after the deadline | Rejected (`FR-ENT-8`) |
