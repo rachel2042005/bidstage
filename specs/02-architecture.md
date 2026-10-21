@@ -164,7 +164,7 @@ Steps 3 and 4 share one transaction, so a read model can never reflect an event 
 
 ### Commands
 
-`RegisterUser` · `AuthenticateUser` · `PublishTender` · `AddRequirement` · `SubmitBid` · `WithdrawBid` · `CloseTender` · `ScoreRequirement` · `RevealPrices` · `OverrideScore` · `SelectWinner` · `CancelTender`
+`RegisterUser` · `AuthenticateUser` · `PublishTender` · `ReviseTenderDetails` · `AddRequirement` · `SubmitBid` · `WithdrawBid` · `CloseTender` · `ScoreRequirement` · `RevealPrices` · `OverrideScore` · `SelectWinner` · `CancelTender`
 
 `ScoreRequirement` is issued by the agent through `submit_requirement_score`; the rest originate from the UI. `RevealPrices` is issued by the web process only — never the agent. `SqlScoreRequirementHandler` appends `RequirementScored` on the bid stream and inserts one `rm_requirement_score` row in that same transaction (`T-CMD-20`). Weight is copied from `rm_requirement`. A second command for the same `(bid_id, requirement_id)` appends nothing and returns the stored version (`T-AG-4`). The handler rejects a bid with no `BidSubmitted`, a tender with no `TenderClosedForBids` (`T-INV-2`), and a tender that has `PricesRevealed`, `TenderFailed`, or `TenderCancelled` (`T-INV-4`). It does not read `price_amount`.
 

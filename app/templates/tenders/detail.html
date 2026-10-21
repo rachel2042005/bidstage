@@ -8,6 +8,49 @@
   {{ event_type_labels[details.tender.event_type] }}
 </p>
 <h1 class="h3">{{ details.tender.name }}</h1>
+{% if can_edit %}
+<form method="post" action="{{ url_for('tenders.revise_details', tender_id=details.tender.tender_id) }}" class="row g-3">
+  <div class="col-md-8">
+    <label class="form-label" for="name">שם האירוע</label>
+    <input class="form-control" id="name" name="name" required value="{{ edit_form.get('name', '') }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label" for="event_type">סוג</label>
+    <select class="form-select" id="event_type" name="event_type" required>
+      {% for value, label in event_type_labels.items() %}
+      <option value="{{ value }}" {% if edit_form.get('event_type') == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-4">
+    <label class="form-label" for="event_date">תאריך האירוע</label>
+    <input class="form-control ltr-numeric" type="date" id="event_date" name="event_date" value="{{ edit_form.get('event_date', '') }}">
+    {% if not edit_form.get('event_date') %}<div class="form-text">טרם נקבע</div>{% endif %}
+  </div>
+  <div class="col-md-4">
+    <label class="form-label" for="region">אזור</label>
+    <input class="form-control" id="region" name="region" value="{{ edit_form.get('region', '') }}">
+    {% if not edit_form.get('region') %}<div class="form-text">טרם נקבע</div>{% endif %}
+  </div>
+  <div class="col-md-4">
+    <label class="form-label" for="budget">תקציב משוער (₪)</label>
+    <input class="form-control ltr-numeric" id="budget" name="budget" inputmode="decimal" value="{{ edit_form.get('budget', '') }}">
+    {% if not edit_form.get('budget') %}<div class="form-text">טרם נקבע</div>{% endif %}
+  </div>
+  <div class="col-md-6">
+    <label class="form-label" for="deadline">מועד אחרון להגשה (שעון ישראל)</label>
+    <input class="form-control ltr-numeric" type="datetime-local" id="deadline" name="deadline" value="{{ edit_form.get('deadline', '') }}">
+    {% if not edit_form.get('deadline') %}<div class="form-text">טרם נקבע</div>{% endif %}
+  </div>
+  <div class="col-md-6">
+    <label class="form-label" for="alpha">משקל איכות α (0–1)</label>
+    <input class="form-control ltr-numeric" id="alpha" name="alpha" inputmode="decimal" required value="{{ edit_form.get('alpha', '0.6') }}">
+  </div>
+  <div class="col-12">
+    <button type="submit" class="btn btn-outline-primary">שמירת שינויים</button>
+  </div>
+</form>
+{% else %}
 <dl class="row">
   <dt class="col-sm-3">אזור</dt>
   <dd class="col-sm-9">{% if details.tender.region %}{{ details.tender.region }}{% else %}טרם נקבע{% endif %}</dd>
@@ -24,6 +67,7 @@
   <dd class="col-sm-9"><span class="ltr-numeric" id="bid-count">{{ bid_count }}</span></dd>
   {% endif %}
 </dl>
+{% endif %}
 {% if can_close %}
 <form method="post" action="{{ url_for('comparison.close', tender_id=details.tender.tender_id) }}" class="mb-3">
   <button type="submit" class="btn btn-outline-danger">סגירה להצעות</button>
