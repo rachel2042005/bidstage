@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from app.domain.user import DomainError, UnknownEventTypeError
 from app.events.event_store import StoredEvent
@@ -45,6 +46,14 @@ CURRENCY = "ILS"
 
 
 class PastDeadlineError(DomainError):
+    pass
+
+
+class PastEventDateError(DomainError):
+    pass
+
+
+class DeadlineAfterEventError(DomainError):
     pass
 
 
@@ -215,6 +224,16 @@ def assert_can_publish(state: TenderState, now: datetime) -> None:
         raise WeightSumError(total)
     if state.deadline is None or state.deadline <= _as_utc(now):
         raise PastDeadlineError("deadline must still be in the future")
+    if not state.region.strip():
+        raise InvalidTenderError("region is required")
+    if state.budget_amount <= 0 or state.budget_currency != CURRENCY:
+        raise InvalidBudgetError("budget must be a positive number of agorot")
+    if state.event_date is None or state.event_date < israel_today(now):
+        raise PastEventDateError("event date must be today or later")
+    if any(not item.description.strip() for item in state.requirements):
+        raise InvalidTenderError("description is required")
+    if state.deadline >= event_day_start(state.event_date):
+        raise DeadlineAfterEventError("deadline must be before the event date")
 
 
 def apply_tender(state: TenderState, event: StoredEvent) -> TenderState:
@@ -290,16 +309,18 @@ def replay_tender(events: list[StoredEvent]) -> TenderState:
 
 def _apply_created(event: StoredEvent) -> TenderState:
     data = event.event_data
-    budget = data["estimated_budget"]
+    budget = data.get("estimated_budget")
+    event_date = data.get("event_date")
+    deadline = data.get("deadline")
     return TenderState(
         tender_id=event.stream_id,
         name=data["name"],
         event_type=data["event_type"],
-        event_date=date.fromisoformat(data["event_date"]),
-        region=data["region"],
-        budget_amount=int(budget["amount"]),
-        budget_currency=str(budget["currency"]),
-        deadline=_parse_timestamp(data["deadline"]),
+        event_date=date.fromisoformat(event_date) if event_date else None,
+        region=data.get("region") or "",
+        budget_amount=int(budget["amount"]) if budget else 0,
+        budget_currency=str(budget["currency"]) if budget else CURRENCY,
+        deadline=_parse_timestamp(deadline) if deadline else None,
         alpha=Decimal(data["alpha"]),
         organizer_id=data["organizer_id"],
         requirements=(),
@@ -356,6 +377,18 @@ def _copy(state: TenderState, **changes) -> TenderState:
 def _parse_timestamp(value: str) -> datetime:
     parsed = datetime.fromisoformat(value)
     return _as_utc(parsed)
+
+
+_ISRAEL = ZoneInfo("Asia/Jerusalem")
+
+
+def israel_today(now: datetime) -> date:
+    return _as_utc(now).astimezone(_ISRAEL).date()
+
+
+def event_day_start(event_date: date) -> datetime:
+    local = datetime(event_date.year, event_date.month, event_date.day, tzinfo=_ISRAEL)
+    return local.astimezone(timezone.utc)
 
 
 def _as_utc(value: datetime) -> datetime:

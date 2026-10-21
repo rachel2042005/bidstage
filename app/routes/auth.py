@@ -46,7 +46,7 @@ def _put_session(user_id: str, email: str, display_name: str, role: str) -> None
 def register_form():
     if session.get("user_id"):
         return redirect(url_for("pages.home"))
-    return render_template("auth/register.html", roles=_ROLE_LABELS)
+    return render_template("auth/register.html", roles=_ROLE_LABELS, form={})
 
 
 @bp.post("/register")
@@ -85,7 +85,11 @@ def register_submit():
         flash(_validation_message(str(exc)), "danger")
     except DomainError:
         flash("לא ניתן להשלים את ההרשמה.", "danger")
-    return render_template("auth/register.html", roles=_ROLE_LABELS), 400
+    return render_template(
+        "auth/register.html",
+        roles=_ROLE_LABELS,
+        form={"display_name": display_name, "email": email, "role": role},
+    ), 400
 
 
 @bp.get("/login")

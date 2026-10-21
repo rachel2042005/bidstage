@@ -8,11 +8,11 @@
     <form method="post" action="{{ url_for('auth.register_submit') }}" class="card card-body shadow-sm">
       <div class="mb-3">
         <label for="display_name" class="form-label">שם מלא</label>
-        <input class="form-control" id="display_name" name="display_name" required>
+        <input class="form-control" id="display_name" name="display_name" required value="{{ form.get('display_name', '') }}">
       </div>
       <div class="mb-3">
         <label for="email" class="form-label">דוא״ל</label>
-        <input class="form-control" type="email" id="email" name="email" required autocomplete="username">
+        <input class="form-control" type="email" id="email" name="email" required autocomplete="username" value="{{ form.get('email', '') }}">
       </div>
       <div class="mb-3">
         <label for="password" class="form-label">סיסמה</label>
@@ -21,9 +21,9 @@
       <div class="mb-3">
         <label for="role" class="form-label">תפקיד</label>
         <select class="form-select" id="role" name="role" required>
-          <option value="" disabled selected>בחרו תפקיד</option>
+          <option value="" disabled {% if not form.get('role') %}selected{% endif %}>בחרו תפקיד</option>
           {% for value, label in roles.items() %}
-          <option value="{{ value }}">{{ label }}</option>
+          <option value="{{ value }}" {% if form.get('role') == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
       </div>

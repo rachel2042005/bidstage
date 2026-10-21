@@ -173,6 +173,40 @@ def test_query_does_not_read_the_event_stream():
     assert found.email == "org@example.com"
 
 
+def test_duplicate_email_keeps_one_account_and_redisplays_the_form(client, app):
+    """FR-AUTH-1: the same email, in any case, cannot register twice."""
+    client.post(
+        "/register",
+        data={
+            "email": "org@example.com",
+            "password": PLAINTEXT,
+            "display_name": "מארגנת",
+            "role": ORGANIZER,
+        },
+    )
+    client.get("/logout")
+    response = client.post(
+        "/register",
+        data={
+            "email": "ORG@example.com",
+            "password": "another-secret",
+            "display_name": "מישהו אחר",
+            "role": SUPPLIER,
+        },
+    )
+    body = response.get_data(as_text=True)
+    assert response.status_code == 400
+    assert "כתובת הדוא״ל כבר רשומה במערכת." in body
+    assert 'value="מישהו אחר"' in body
+    assert 'value="ORG@example.com"' in body
+    assert 'value="supplier" selected' in body
+    assert "another-secret" not in body
+    store, users, _tenders, _bids = app.extensions["backend"]
+    assert get_user_by_email(users, "org@example.com") is not None
+    registered = [event for event in store.read_all() if event.event_type == USER_REGISTERED]
+    assert len(registered) == 1
+
+
 def test_register_form_creates_session(client):
     response = client.post(
         "/register",
