@@ -14,6 +14,7 @@ USER_LOGGED_IN: Final = "UserLoggedIn"
 
 # Tender stream
 TENDER_CREATED: Final = "TenderCreated"
+TENDER_DETAILS_REVISED: Final = "TenderDetailsRevised"
 REQUIREMENT_ADDED: Final = "RequirementAdded"
 TENDER_PUBLISHED: Final = "TenderPublished"
 TENDER_CLOSED_FOR_BIDS: Final = "TenderClosedForBids"
@@ -37,6 +38,7 @@ USER_EVENTS: Final = frozenset({USER_REGISTERED, USER_LOGGED_IN})
 TENDER_EVENTS: Final = frozenset(
     {
         TENDER_CREATED,
+        TENDER_DETAILS_REVISED,
         REQUIREMENT_ADDED,
         TENDER_PUBLISHED,
         TENDER_CLOSED_FOR_BIDS,

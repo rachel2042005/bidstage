@@ -31,7 +31,7 @@ from app.domain.tender import (
     PastEventDateError,
     RequirementState,
     TenderState,
-    event_day_start,
+    event_day_end,
     israel_today,
     TenderNotFoundError,
     assert_can_publish,
@@ -183,8 +183,8 @@ def _created_payload(command: PublishTender, now: datetime) -> dict:
         deadline = _utc(command.deadline)
         if deadline <= now:
             raise PastDeadlineError("deadline must be in the future")
-        if event_day is not None and deadline >= event_day_start(event_day):
-            raise DeadlineAfterEventError("deadline must be before the event date")
+        if event_day is not None and deadline >= event_day_end(event_day):
+            raise DeadlineAfterEventError("deadline must be before the end of the event date")
         payload["deadline"] = deadline.isoformat()
     return payload
 
