@@ -39,11 +39,11 @@ Role is a field of `UserRegistered`, not a later `UserRoleAssigned` event. `FR-A
 | `TenderDetailsRevised` | Same fields as `TenderCreated` | `ReviseTenderDetails` | Tender is still a draft and the actor owns it. Same field rules as `TenderCreated`. Requirements are unchanged. |
 | `RequirementAdded` | `requirement_id`, `type`, `weight`, `is_threshold`, `description` | `AddRequirement` | Tender not yet published; `type` is one of the five; `0 < weight ≤ 100`. `description` may be empty on a draft. |
 | `TenderPublished` | `published_at` | `PublishTender` | Weights sum to exactly 100; at least one requirement, each with a description; region, a positive ILS budget, event date, and deadline are all present; deadline still future and before the end of the event date in Asia/Jerusalem; event date is today or later in Asia/Jerusalem. An event dated today can be published when the deadline is later that day. |
-| `TenderClosedForBids` | `closed_at`, `bid_count` | `CloseTender` | Tender was published; deadline passed, or organizer closed it explicitly |
+| `TenderClosedForBids` | `closed_at`, `bid_count` | `CloseTender` | Tender was published; deadline passed, or organizer closed it explicitly. `bid_count` is the number of bids still submitted. A withdrawn bid is not counted. |
 | `PricesRevealed` | `prices: [{bid_id, amount}]` | `RevealPrices` | Every bid is in a terminal assessment state; at least one bid qualified |
 | `FinalRankingCalculated` | `ranking: [{bid_id, quality, price, price_score, final_score, rank}]` | `RevealPrices` / `OverrideScore` | Immediately follows `PricesRevealed` or an override |
 | `WinnerSelected` | `bid_id`, `selected_by`, `selected_at` | `SelectWinner` | Ranking exists; the chosen bid is qualified |
-| `TenderFailed` | `reason`, `failed_at` | `CloseTender` / assessment completion | No bid passed both thresholds and the quality floor |
+| `TenderFailed` | `reason`, `failed_at` | `CloseTender` / assessment completion | Follows `TenderClosedForBids` when `bid_count` is 0, with reason `no_bids_submitted`. On assessment completion, no bid passed both thresholds and the quality floor, with reason `no_qualified_bids`. |
 | `TenderCancelled` | `reason`, `cancelled_at` | `CancelTender` | Not already decided or failed |
 
 ### Bid stream

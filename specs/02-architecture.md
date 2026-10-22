@@ -166,6 +166,8 @@ Steps 3 and 4 share one transaction, so a read model can never reflect an event 
 
 `RegisterUser` · `AuthenticateUser` · `PublishTender` · `ReviseTenderDetails` · `AddRequirement` · `SubmitBid` · `WithdrawBid` · `CloseTender` · `ScoreRequirement` · `RevealPrices` · `OverrideScore` · `SelectWinner` · `CancelTender`
 
+`CloseTender` appends `TenderClosedForBids` for an open tender. `bid_count` is the number of bids still submitted. When that count is zero it also appends `TenderFailed` with reason `no_bids_submitted` (`FR-EVAL-11`, `T-CMD-22`). The web request does not start the agent. `POST /organizer/tenders/<tender_id>/close` is limited to the owner and redirects to the organizer tender page.
+
 `ScoreRequirement` is issued by the agent through `submit_requirement_score`; the rest originate from the UI. `RevealPrices` is issued by the web process only — never the agent. `SqlScoreRequirementHandler` appends `RequirementScored` on the bid stream and inserts one `rm_requirement_score` row in that same transaction (`T-CMD-20`). Weight is copied from `rm_requirement`. A second command for the same `(bid_id, requirement_id)` appends nothing and returns the stored version (`T-AG-4`). The handler rejects a bid with no `BidSubmitted`, a tender with no `TenderClosedForBids` (`T-INV-2`), and a tender that has `PricesRevealed`, `TenderFailed`, or `TenderCancelled` (`T-INV-4`). It does not read `price_amount`.
 
 `CompleteAssessment` is the in-process command behind `run_once`. Its SQL handler appends `QualityAssessmentCompleted` or `BidDisqualified` on the bid stream and, in that same transaction, projects `rm_bid_assessment`. A qualified completion inserts one `rm_requirement_score` row per requirement in the payload only when that `(bid_id, requirement_id)` is absent (`T-CMD-13`, `T-CMD-21`). An intermediate score already stored by `SqlScoreRequirementHandler` is left as it is. The handler does not read `PriceOfferSealed`. A bid stream that already has either terminal event rejects a second completion (`T-CMD-15`).
@@ -317,7 +319,9 @@ class SemanticSearchService:
     def search_regulations(self, query: str, top_k: int = 3) -> list[dict]: ...
 ```
 
-`search_bids` queries `bid_concepts`. When `tender_id` is given, the filter `{"tender_id": tender_id}` is passed into `query`, so the restriction is applied by the store before neighbours are chosen (`FR-SRCH-4`). Omitting `tender_id` searches across tenders. Organizer ownership is the caller's job (`FR-SRCH-6`, `T-AUTH-4`); this service takes no organizer id.
+`search_bids` queries `bid_concepts`. When `tender_id` is given, the filter `{"tender_id": tender_id}` is passed into `query`, so the restriction is applied by the store before neighbours are chosen (`FR-SRCH-4`). Omitting `tender_id` searches across tenders. Ownership of those tenders is the caller's job (`FR-SRCH-6`, `T-AUTH-4`); this service takes no organizer id.
+
+`search_bids_for_tenders(query, tender_ids, top_k)` is the same query with `tender_id` either equal to the single id or `{"$in": tender_ids}`. An empty list returns nothing. `SemanticBidSearch` is the object `main.py` stores on `app.extensions["bid_search"]`: it calls that method and returns `bid_id`, `tender_id`, and `excerpt`, which is the port `SearchOrganizerBids` expects. `main.py` builds the embedder, then `ChromaVectorStore`, and checks `heartbeat()` before serving. A failed heartbeat is logged and the extension stays `UnavailableBidSearch`, so the web process still starts. Concepts for under-evaluation, decided, and failed tenders are copied from `rm_bid_for_assessment` into `bid_concepts` when that id is missing. That read model has no price column. Ids already stored are left in place.
 
 `search_regulations` queries `regulations`.
 

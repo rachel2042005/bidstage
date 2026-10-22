@@ -16,7 +16,7 @@ from typing import Protocol
 
 import pyodbc
 
-from app.domain.bid import DISQUALIFIED, QUALIFIED, SUBMITTED
+from app.domain.bid import DISQUALIFIED, QUALIFIED, SUBMITTED, WITHDRAWN
 from app.domain.user import UnknownEventTypeError
 from app.events.event_types import (
     BID_DISQUALIFIED,
@@ -84,6 +84,8 @@ class BidsProjection(Protocol):
 
     def count_for(self, tender_id: str) -> int: ...
 
+    def apply_withdrawn(self, bid_id: str) -> None: ...
+
     def has_active(self, tender_id: str, supplier_id: str) -> bool: ...
 
     def clear(self) -> None: ...
@@ -93,7 +95,6 @@ class InMemoryBidsProjection:
     def __init__(self) -> None:
         self._assessment: dict[str, AssessmentView] = {}
         self._supplier: dict[str, SupplierBidView] = {}
-        self._counts: dict[str, int] = {}
         self._comparison: dict[str, ComparisonRow] = {}
 
     def apply_submitted(
@@ -117,7 +118,6 @@ class InMemoryBidsProjection:
             submitted_at=submitted_at,
         )
         tender_id = data["tender_id"]
-        self._counts[tender_id] = self._counts.get(tender_id, 0) + 1
         self._comparison[bid_id] = ComparisonRow(
             bid_id=bid_id,
             tender_id=tender_id,
@@ -136,7 +136,15 @@ class InMemoryBidsProjection:
         return rows
 
     def count_for(self, tender_id: str) -> int:
-        return self._counts.get(tender_id, 0)
+        return sum(
+            1
+            for row in self._supplier.values()
+            if row.tender_id == tender_id and row.status == SUBMITTED
+        )
+
+    def apply_withdrawn(self, bid_id: str) -> None:
+        self._supplier[bid_id] = replace(self._supplier[bid_id], status=WITHDRAWN)
+        self._comparison[bid_id] = replace(self._comparison[bid_id], status=WITHDRAWN)
 
     def comparison_for(self, tender_id: str) -> list[ComparisonRow]:
         rows = [row for row in self._comparison.values() if row.tender_id == tender_id]
@@ -185,7 +193,6 @@ class InMemoryBidsProjection:
     def clear(self) -> None:
         self._assessment.clear()
         self._supplier.clear()
-        self._counts.clear()
         self._comparison.clear()
 
 
@@ -379,12 +386,27 @@ class SqlBidsProjection:
     def count_for(self, tender_id: str) -> int:
         cursor = self._conn.cursor()
         cursor.execute(
-            "SELECT bid_count FROM dbo.rm_dashboard WHERE tender_id = ?",
+            "SELECT COUNT(*) FROM dbo.rm_supplier_bid WHERE tender_id = ? AND status = ?",
             tender_id,
+            SUBMITTED,
         )
         row = cursor.fetchone()
         cursor.close()
         return int(row[0]) if row else 0
+
+    def apply_withdrawn(self, bid_id: str) -> None:
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "UPDATE dbo.rm_supplier_bid SET status = ? WHERE bid_id = ?",
+            WITHDRAWN,
+            bid_id,
+        )
+        cursor.execute(
+            "UPDATE dbo.rm_bid_ranking SET status = ? WHERE bid_id = ?",
+            WITHDRAWN,
+            bid_id,
+        )
+        cursor.close()
 
     def has_active(self, tender_id: str, supplier_id: str) -> bool:
         cursor = self._conn.cursor()
@@ -500,12 +522,13 @@ def rebuild_bids(store, bids: BidsProjection) -> None:
                 raise UnknownEventTypeError(event.event_type)
             bids.apply_revealed(event.event_data["ranking"], pending_prices)
             pending_prices = None
+        elif event.event_type == BID_WITHDRAWN:
+            bids.apply_withdrawn(event.stream_id)
         elif event.event_type in (
             REQUIREMENT_SCORED,
             QUALITY_ASSESSMENT_COMPLETED,
             BID_DISQUALIFIED,
             SCORE_OVERRIDDEN,
-            BID_WITHDRAWN,
         ):
             continue
         elif event.event_type in BID_EVENTS:

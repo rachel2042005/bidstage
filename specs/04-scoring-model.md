@@ -139,7 +139,7 @@ Add Supplier C at ₪500,000 who scores 4 on a threshold `VENUE` requirement. C 
 | No qualified bids | No \(P_{\min}^{\text{qualified}}\) exists, so no ranking. `TenderFailed`; `PricesRevealed` is never emitted (`INV-7`) |
 | Exactly one qualified bid | Price score 100 by definition; final = 0.6 × quality + 40. Still requires explicit organizer confirmation (`FR-EVAL-8`) |
 | All qualified bids priced equally | Every price score is 100; ranking collapses to quality order |
-| Zero bids submitted | `TenderClosedForBids` with `bid_count = 0`, then `TenderFailed` |
+| Zero bids submitted | `TenderClosedForBids` with `bid_count = 0`, then `TenderFailed` with reason `no_bids_submitted`. Withdrawn bids are not counted. |
 | α = 1 | Pure quality; price score computed and displayed but not weighted |
 | α = 0 | Pure price; quality still gates via thresholds and the floor |
 

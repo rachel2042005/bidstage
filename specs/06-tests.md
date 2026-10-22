@@ -114,6 +114,9 @@ One test per invariant in `03-domain-events.md` §3, each constructing an illega
 | `T-CMD-19` | `QualityAssessmentCompleted` after the bid was queued | Queue `status` is `completed`; a following claim returns nothing |
 | `T-CMD-20` | Closed tender, `BidSubmitted`, requirement weight 40, score 9 | Next bid version is `RequirementScored`; `rm_requirement_score` stores weight 40 |
 | `T-CMD-21` | Venue already scored at 9 weight 40, then qualified completion also names content at 8 weight 60 | Completion appends; both score rows exist; the venue row stays 9 and 40 |
+| `T-CMD-22` | `CloseTender` with no bid still submitted | `TenderClosedForBids` with `bid_count` 0, then `TenderFailed` reason `no_bids_submitted`; status `failed` (`FR-EVAL-11`) |
+| `T-CMD-23` | One submitted bid and one withdrawn bid, closed before the deadline | `TenderClosedForBids` with `bid_count` 1 and no `TenderFailed`. The withdrawn bid alone takes the `T-CMD-22` path |
+| `T-CMD-24` | Owner posts `/organizer/tenders/<id>/close` on an open tender | Confirmation and "סגור מכרז להגשות" are shown only while open. Redirects to the tender page with "בהערכה", or "נכשל" when no bid remains. Another organizer receives 403 and the stream is unchanged |
 | `T-QRY-1` | `rm_tender_detail` plus two `rm_requirement` rows and one `approved_hosts` name | `fetch` returns `tender.type` from `event_type`, the requirements in `position` order, and that host name |
 | `T-QRY-2` | A tender id with no `rm_tender_detail` row | `fetch` returns `None` |
 
@@ -317,7 +320,7 @@ Run before any demo. Each maps to a constraint in `01-requirements.md` §4.
 | Comparison table | `FR-TBL-1` … `FR-TBL-4` | `T-E2E-2`, `T-E2E-5`, `T-SC-7` |
 | Dashboard | `FR-DASH-1` … `FR-DASH-5` | `T-E2E-6` |
 | Data entry | `FR-ENT-1` … `FR-ENT-8` | `T-CMD-1` … `T-CMD-7`, `T-SC-18` |
-| Evaluation and award | `FR-EVAL-1` … `FR-EVAL-10` | `T-SC-10` … `T-SC-13`, `T-AG-8`, `T-E2E-1`, `T-E2E-3`, `T-E2E-4` |
+| Evaluation and award | `FR-EVAL-1` … `FR-EVAL-11` | `T-SC-10` … `T-SC-13`, `T-AG-8`, `T-E2E-1`, `T-E2E-3`, `T-E2E-4`, `T-CMD-22` … `T-CMD-24` |
 | Notifications | `FR-NOT-1` … `FR-NOT-4` | `T-CMD-9`, `T-E2E-1` |
 | Vector database | `NFR-VEC-1` … `NFR-VEC-5` | `T-VEC-1` … `T-VEC-6` |
 | CQRS | `NFR-CQRS-1` … `NFR-CQRS-3` | `T-CMD-8`, `T-CMD-12`, `T-ES-4` |

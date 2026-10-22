@@ -27,7 +27,14 @@ _VENUE_RUBRIC = (
 def _metadata_matches(metadata: dict, where: dict | None) -> bool:
     if not where:
         return True
-    return all(metadata.get(key) == value for key, value in where.items())
+    for key, expected in where.items():
+        actual = metadata.get(key)
+        if isinstance(expected, dict) and "$in" in expected:
+            if actual not in expected["$in"]:
+                return False
+        elif actual != expected:
+            return False
+    return True
 
 
 def _cosine_distance(
@@ -184,3 +191,63 @@ def test_search_bids_keeps_only_the_requested_tender() -> None:
     assert [hit["id"] for hit in hits] == ["bid-mine"]
     assert hits[0]["metadata"]["tender_id"] == "t-1"
     assert hits[0]["text"] == _THIS_TENDER_BID
+
+
+_BEACH_QUERY = "חוף"
+_BEACH_CONCEPT = "הפקה מלאה לטורניר חופים, כולל במה וקהל."
+_HALL_CONCEPT = "אולם סגור עם במה ותאורה."
+_FOREIGN_CONCEPT = "הפקת חוף של מארגן אחר."
+
+
+def test_organizer_port_returns_excerpts_only_for_the_requested_tenders() -> None:
+    """FR-SRCH-4. A closer bid on a tender outside the list cannot take the slot."""
+    from app.services.semantic_bid_search import SemanticBidSearch
+
+    store = InMemoryVectorStore(
+        vectors={
+            _BEACH_QUERY: (1.0, 0.0),
+            _FOREIGN_CONCEPT: (1.0, 0.0),
+            _BEACH_CONCEPT: (0.6, 0.8),
+            _HALL_CONCEPT: (0.0, 1.0),
+        }
+    )
+    store.upsert(
+        BID_CONCEPTS,
+        ids=["doc-foreign", "doc-beach", "doc-hall"],
+        documents=[_FOREIGN_CONCEPT, _BEACH_CONCEPT, _HALL_CONCEPT],
+        metadata=[
+            {"bid_id": "bid-foreign", "tender_id": "t-other"},
+            {"bid_id": "bid-beach", "tender_id": "t-beach"},
+            {"bid_id": "bid-hall", "tender_id": "t-hall"},
+        ],
+    )
+    port = SemanticBidSearch(SemanticSearchService(store))
+
+    hits = port.search_bids(_BEACH_QUERY, ["t-beach", "t-hall"], top_k=1)
+
+    assert [(hit.bid_id, hit.tender_id, hit.excerpt) for hit in hits] == [
+        ("bid-beach", "t-beach", _BEACH_CONCEPT),
+    ]
+
+
+def test_index_bid_concepts_skips_blanks_and_ids_already_stored() -> None:
+    from app.services.bid_concept_index import index_bid_concepts
+
+    store = InMemoryVectorStore()
+    first = index_bid_concepts(
+        store,
+        [
+            ("bid-beach", "t-beach", "  הפקה לטורניר חופים  "),
+            ("bid-blank", "t-beach", "   "),
+            ("bid-beach", "t-beach", "כפילות"),
+        ],
+    )
+    second = index_bid_concepts(
+        store, [("bid-beach", "t-beach", "הפקה לטורניר חופים")]
+    )
+
+    assert first == 1
+    assert second == 0
+    stored = store.get(BID_CONCEPTS, ["bid-beach"])
+    assert stored[0].document == "הפקה לטורניר חופים"
+    assert stored[0].metadata == {"bid_id": "bid-beach", "tender_id": "t-beach"}

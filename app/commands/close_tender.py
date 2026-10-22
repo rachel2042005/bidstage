@@ -1,7 +1,9 @@
-"""CloseTender — FR-EVAL-1.
+"""CloseTender — FR-EVAL-1, FR-EVAL-11.
 
 An open tender closes when its deadline has passed, or when the organizer
-closes it explicitly. Zero submitted bids also append TenderFailed.
+closes it explicitly. bid_count is bids still submitted. Zero submitted bids
+also append TenderFailed with reason no_bids_submitted. This command does
+not start the agent.
 """
 
 from __future__ import annotations
@@ -56,7 +58,7 @@ def close_tender(store, tenders, bids, command: CloseTender, *, now: datetime | 
         events.append(
             NewEvent(
                 TENDER_FAILED,
-                {"reason": "no bids", "failed_at": clock.isoformat()},
+                {"reason": "no_bids_submitted", "failed_at": clock.isoformat()},
                 metadata,
             )
         )

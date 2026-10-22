@@ -14,6 +14,7 @@ from app.domain.tender import CURRENCY, OPEN, TenderState
 from app.domain.user import DomainError
 
 SUBMITTED = "submitted"
+WITHDRAWN = "withdrawn"
 QUALIFIED = "qualified"
 DISQUALIFIED = "disqualified"
 

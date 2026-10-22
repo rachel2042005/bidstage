@@ -43,6 +43,28 @@ class SemanticSearchService:
         matches = self._store.query(BID_CONCEPTS, query, top_k, where=where)
         return [_hit(match) for match in matches]
 
+    def search_bids_for_tenders(
+        self,
+        query: str,
+        tender_ids: list[str],
+        top_k: int = 5,
+    ) -> list[dict]:
+        """Nearest concepts whose tender is in `tender_ids` (`FR-SRCH-4`).
+
+        The filter is applied before neighbours are chosen. An empty list
+        searches nothing: an unfiltered query would rank other organizers'
+        bids into the result window.
+        """
+        if not tender_ids:
+            return []
+        where: dict = (
+            {"tender_id": tender_ids[0]}
+            if len(tender_ids) == 1
+            else {"tender_id": {"$in": list(tender_ids)}}
+        )
+        matches = self._store.query(BID_CONCEPTS, query, top_k, where=where)
+        return [_hit(match) for match in matches]
+
     def get_rubric(self, requirement_type: str) -> dict | None:
         """The unchunked rubric for one requirement type (`NFR-VEC-3`, `T-VEC-3`).
 

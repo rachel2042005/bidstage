@@ -81,7 +81,7 @@ def close(tender_id: str):
         flash(_close_message(exc), "danger")
         return redirect(url_for("tenders.organizer_tender", tender_id=tender_id))
     flash("המכרז נסגר להצעות.", "success")
-    return redirect(url_for("comparison.comparison", tender_id=tender_id))
+    return redirect(url_for("tenders.organizer_tender", tender_id=tender_id))
 
 
 @bp.post("/organizer/tenders/<tender_id>/reveal")

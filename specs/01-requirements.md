@@ -101,6 +101,7 @@ Administrator role and supplier approval workflow; payment or contracting after 
 | ID | Requirement |
 | --- | --- |
 | `FR-EVAL-1` | When the deadline passes, the tender closes for bids and moves to under evaluation. |
+| `FR-EVAL-11` | An organizer can close an open tender they own before the deadline. The tender page shows "סגור מכרז להגשות" only while it is open, and asks for confirmation before posting. Closing appends `TenderClosedForBids` and does not start the agent. `bid_count` counts bids still submitted; a withdrawn bid is excluded. When that count is zero, `TenderFailed` follows with reason `no_bids_submitted`. Another organizer is rejected and the stream is unchanged. |
 | `FR-EVAL-2` | The agent scores each requirement of each bid, recording score, justification and sources. |
 | `FR-EVAL-3` | A bid failing any threshold requirement is disqualified and is not scored further. |
 | `FR-EVAL-4` | A bid whose quality score is below 60 is disqualified. |
