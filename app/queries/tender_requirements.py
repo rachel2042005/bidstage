@@ -7,6 +7,7 @@ and `approved_hosts`. It does not read the events table (`NFR-CQRS-2`, `T-QRY-1`
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Protocol
 
 import pyodbc
@@ -17,11 +18,18 @@ FROM dbo.rm_tender_detail
 WHERE tender_id = ?
 """
 
+# The tender projection writes requirement_type and sort_order. The agent
+# schema writes type and position. Unused columns stay at their defaults
+# ('' and 0), so each side prefers the column that was actually filled.
 _SELECT_REQUIREMENTS = """
-SELECT requirement_id, type, weight, is_threshold, description
+SELECT requirement_id,
+       COALESCE(NULLIF(requirement_type, ''), type) AS type,
+       weight,
+       is_threshold,
+       description
 FROM dbo.rm_requirement
 WHERE tender_id = ?
-ORDER BY position ASC
+ORDER BY COALESCE(NULLIF(sort_order, 0), position) ASC
 """
 
 _SELECT_HOSTS = """
@@ -66,7 +74,7 @@ def _fetch(conn: pyodbc.Connection, tender_id: str) -> dict | None:
         "tender": {
             "name": tender[0],
             "type": tender[1],
-            "event_date": tender[2],
+            "event_date": _event_date(tender[2]),
             "region": tender[3],
             "alpha": tender[4],
         },
@@ -82,3 +90,16 @@ def _fetch(conn: pyodbc.Connection, tender_id: str) -> dict | None:
         ],
         "approved_hosts": [row[0] for row in hosts],
     }
+
+
+def _event_date(value: object) -> str:
+    """The agent contract is an ISO date string.
+
+    The web projection stores `event_date` as a SQL `DATE`, so the driver
+    returns a `date`. A text column comes back as the inserted string.
+    """
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)

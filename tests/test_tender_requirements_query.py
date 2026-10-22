@@ -116,6 +116,61 @@ def test_fetch_returns_published_tender_requirements() -> None:
     assert host_name in result["approved_hosts"]
 
 
+def test_fetch_reads_projection_requirement_type_and_sort_order() -> None:
+    """Rows from the tender projection keep their taxonomy and list order.
+
+    That writer fills requirement_type and sort_order. type and position stay
+    at their defaults, which is what the agent saw as five empty types.
+    """
+    _skip_unless_configured()
+    tender_id = f"tender-{uuid.uuid4()}"
+
+    with transaction() as conn:
+        create_schema(conn)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO dbo.rm_tender_detail "
+            "(tender_id, name, event_type, event_date, region, alpha) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            tender_id,
+            "Summer Stage",
+            "festival",
+            "2026-07-01",
+            "Tel Aviv",
+            0.6,
+        )
+        cursor.execute(
+            "INSERT INTO dbo.rm_requirement "
+            "(requirement_id, tender_id, requirement_type, weight, is_threshold, "
+            "description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "req-content",
+            tender_id,
+            "CONTENT",
+            20,
+            0,
+            "Evening program",
+            2,
+        )
+        cursor.execute(
+            "INSERT INTO dbo.rm_requirement "
+            "(requirement_id, tender_id, requirement_type, weight, is_threshold, "
+            "description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "req-venue",
+            tender_id,
+            "VENUE",
+            20,
+            1,
+            "Hall for 5000",
+            1,
+        )
+        cursor.close()
+
+    result = SqlTenderRequirementsQuery().fetch(tender_id)
+
+    assert [item["type"] for item in result["requirements"]] == ["VENUE", "CONTENT"]
+    assert [item["id"] for item in result["requirements"]] == ["req-venue", "req-content"]
+
+
 def test_fetch_returns_none_for_an_unknown_tender() -> None:
     """T-QRY-2. The id is fresh and has no detail row."""
     _skip_unless_configured()
