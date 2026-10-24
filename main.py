@@ -5,6 +5,8 @@ bootstrap.init() runs before anything else imports an HTTPS client (ENV-1).
 
 from __future__ import annotations
 
+import logging
+
 from app import bootstrap
 
 bootstrap.init()
@@ -124,5 +126,59 @@ def create_app(
     return app
 
 
+_LOG = logging.getLogger("bidstage.search")
+
+
+def build_bid_search(
+    settings,
+    *,
+    embedder_factory=None,
+    store_factory=None,
+    index_concepts=None,
+):
+    """Chroma plus the organizer search port.
+
+    A failed heartbeat logs a warning and returns `UnavailableBidSearch`, so
+    the web process still starts. Indexing errors leave search connected to
+    whatever is already stored.
+    """
+    from app.infrastructure.embeddings import build_embedder
+    from app.infrastructure.vector_store import ChromaVectorStore
+    from app.routes.bid_search import UnavailableBidSearch
+    from app.services.bid_concept_index import index_stored_bid_concepts
+    from app.services.semantic_bid_search import SemanticBidSearch
+    from app.services.semantic_search_service import SemanticSearchService
+
+    embedder_factory = embedder_factory or build_embedder
+    store_factory = store_factory or ChromaVectorStore
+    index_concepts = index_concepts or index_stored_bid_concepts
+    try:
+        embedder = embedder_factory(settings)
+        store = store_factory(settings, embedder=embedder)
+        store.heartbeat()
+    except Exception:
+        _LOG.warning(
+            "Chroma is unreachable; organizer search is unavailable",
+            exc_info=True,
+        )
+        return UnavailableBidSearch()
+    try:
+        indexed = index_concepts(store)
+        if indexed:
+            _LOG.info("Indexed %s bid concept(s) for organizer search", indexed)
+    except Exception:
+        _LOG.warning(
+            "Bid concepts were not indexed; search uses what is already stored",
+            exc_info=True,
+        )
+    return SemanticBidSearch(SemanticSearchService(store))
+
+
 if __name__ == "__main__":
-    create_app().run(debug=True)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    try:
+        search = build_bid_search(load_settings())
+    except ConfigError:
+        _LOG.warning("Settings are incomplete; organizer search is unavailable")
+        search = None
+    create_app(bid_search=search).run(debug=True)

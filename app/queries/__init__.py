@@ -4,5 +4,6 @@ Handlers read exclusively from read models. A query handler that touches the
 events table violates NFR-CQRS-2.
 
 Queries: GetUserByEmail, GetUserById, SearchTenders, GetTenderDetails,
-GetBidComparison, GetDashboardStats, GetBidAssessment, SearchOrganizerBids.
+GetBidComparison, GetDashboardStats, GetBidAssessment, GetTenderRequirements,
+SearchOrganizerBids.
 """

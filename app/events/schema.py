@@ -43,6 +43,129 @@ BEGIN
 END
 """
 
+# Read models projected in the same transaction as the event that produced them.
+# rm_bid_for_assessment is the agent queue. It has no price column.
+CREATE_RM_BID_ASSESSMENT = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables WHERE name = 'rm_bid_assessment' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.rm_bid_assessment (
+        bid_id                  VARCHAR(100)  NOT NULL,
+        tender_id               VARCHAR(100)  NULL,
+        status                  VARCHAR(20)   NOT NULL,
+        quality_score           FLOAT         NULL,
+        reason                  VARCHAR(50)   NULL,
+        failed_requirement_id   VARCHAR(100)  NULL,
+        CONSTRAINT pk_rm_bid_assessment PRIMARY KEY (bid_id)
+    );
+END
+"""
+
+CREATE_RM_REQUIREMENT_SCORE = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables WHERE name = 'rm_requirement_score' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.rm_requirement_score (
+        bid_id          VARCHAR(100) NOT NULL,
+        requirement_id  VARCHAR(100) NOT NULL,
+        score           INT          NOT NULL,
+        weight          INT          NOT NULL,
+        CONSTRAINT pk_rm_requirement_score PRIMARY KEY (bid_id, requirement_id)
+    );
+END
+"""
+
+CREATE_RM_BID_FOR_ASSESSMENT = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables
+    WHERE name = 'rm_bid_for_assessment' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.rm_bid_for_assessment (
+        bid_id          VARCHAR(100)  NOT NULL,
+        tender_id       VARCHAR(100)  NOT NULL,
+        supplier_id     VARCHAR(100)  NOT NULL,
+        concept         NVARCHAR(MAX) NOT NULL,
+        responses_json  NVARCHAR(MAX) NOT NULL,
+        status          VARCHAR(20)   NOT NULL,
+        queued_at       DATETIME2     NOT NULL
+            CONSTRAINT df_rm_bid_for_assessment_queued_at DEFAULT SYSUTCDATETIME(),
+        claimed_at      DATETIME2     NULL,
+        CONSTRAINT pk_rm_bid_for_assessment PRIMARY KEY (bid_id),
+        CONSTRAINT ck_rm_bid_for_assessment_status
+            CHECK (status IN ('pending', 'claimed', 'completed'))
+    );
+END
+"""
+
+CREATE_RM_BID_RANKING = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables WHERE name = 'rm_bid_ranking' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.rm_bid_ranking (
+        tender_id     VARCHAR(100) NOT NULL,
+        bid_id        VARCHAR(100) NOT NULL,
+        quality       FLOAT        NOT NULL,
+        price_amount  INT          NOT NULL,
+        price_score   FLOAT        NOT NULL,
+        final_score   FLOAT        NOT NULL,
+        rank          INT          NOT NULL,
+        CONSTRAINT pk_rm_bid_ranking PRIMARY KEY (tender_id, bid_id)
+    );
+END
+"""
+
+# Tender requirements for GetTenderRequirements. PublishTender fills these later.
+CREATE_RM_TENDER_DETAIL = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables WHERE name = 'rm_tender_detail' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.rm_tender_detail (
+        tender_id   VARCHAR(100)  NOT NULL,
+        name        NVARCHAR(400) NOT NULL,
+        event_type  VARCHAR(100)  NOT NULL,
+        event_date  NVARCHAR(40)  NOT NULL,
+        region      NVARCHAR(200) NOT NULL,
+        alpha       FLOAT         NOT NULL,
+        CONSTRAINT pk_rm_tender_detail PRIMARY KEY (tender_id)
+    );
+END
+"""
+
+CREATE_RM_REQUIREMENT = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables WHERE name = 'rm_requirement' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.rm_requirement (
+        tender_id       VARCHAR(100)  NOT NULL,
+        requirement_id  VARCHAR(100)  NOT NULL,
+        position        INT           NOT NULL,
+        type            VARCHAR(20)   NOT NULL,
+        weight          INT           NOT NULL,
+        is_threshold    BIT           NOT NULL,
+        description     NVARCHAR(MAX) NOT NULL,
+        CONSTRAINT pk_rm_requirement PRIMARY KEY (tender_id, requirement_id)
+    );
+END
+"""
+
+CREATE_APPROVED_HOSTS = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables WHERE name = 'approved_hosts' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.approved_hosts (
+        name NVARCHAR(200) NOT NULL,
+        CONSTRAINT pk_approved_hosts PRIMARY KEY (name)
+    );
+END
+"""
+
 TABLE_EXISTS = (
     "SELECT COUNT(*) FROM sys.tables "
     "WHERE name = 'events' AND schema_id = SCHEMA_ID('dbo')"
@@ -57,11 +180,46 @@ ORDER BY c.column_id
 """
 
 
+# A web process that created the queue before these columns existed must grow
+# in place. IF NOT EXISTS on the CREATE leaves that thinner table untouched.
+_ENSURE_ASSESSMENT_QUEUE = """
+IF OBJECT_ID('dbo.rm_bid_for_assessment', 'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH('dbo.rm_bid_for_assessment', 'supplier_id') IS NULL
+        ALTER TABLE dbo.rm_bid_for_assessment ADD supplier_id VARCHAR(100) NOT NULL
+            CONSTRAINT df_rm_bid_for_assessment_supplier DEFAULT '';
+    IF COL_LENGTH('dbo.rm_bid_for_assessment', 'status') IS NULL
+        ALTER TABLE dbo.rm_bid_for_assessment ADD status VARCHAR(20) NOT NULL
+            CONSTRAINT df_rm_bid_for_assessment_status DEFAULT 'pending';
+    IF COL_LENGTH('dbo.rm_bid_for_assessment', 'queued_at') IS NULL
+        ALTER TABLE dbo.rm_bid_for_assessment ADD queued_at DATETIME2 NOT NULL
+            CONSTRAINT df_rm_bid_for_assessment_queued_at_add DEFAULT SYSUTCDATETIME();
+    IF COL_LENGTH('dbo.rm_bid_for_assessment', 'claimed_at') IS NULL
+        ALTER TABLE dbo.rm_bid_for_assessment ADD claimed_at DATETIME2 NULL;
+    IF NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = 'ck_rm_bid_for_assessment_status'
+    )
+        ALTER TABLE dbo.rm_bid_for_assessment
+            ADD CONSTRAINT ck_rm_bid_for_assessment_status
+            CHECK (status IN ('pending', 'claimed', 'completed'));
+END
+"""
+
+
 def create_schema(conn: pyodbc.Connection) -> None:
     """Idempotent. Safe to call on every startup."""
     cursor = conn.cursor()
     cursor.execute(CREATE_EVENTS_TABLE)
     cursor.execute(CREATE_EVENT_TYPE_INDEX)
+    cursor.execute(CREATE_RM_BID_ASSESSMENT)
+    cursor.execute(CREATE_RM_REQUIREMENT_SCORE)
+    cursor.execute(CREATE_RM_BID_RANKING)
+    cursor.execute(CREATE_RM_BID_FOR_ASSESSMENT)
+    cursor.execute(_ENSURE_ASSESSMENT_QUEUE)
+    cursor.execute(CREATE_RM_TENDER_DETAIL)
+    cursor.execute(CREATE_RM_REQUIREMENT)
+    cursor.execute(CREATE_APPROVED_HOSTS)
     cursor.close()
 
 

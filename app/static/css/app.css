@@ -90,6 +90,54 @@ h1, h2, .navbar-brand {
   border-bottom-color: var(--app-line);
 }
 
+/* Header and body share one grid. text-align is set on the cell, so a
+   numeric value cannot pull its column out from under the header. */
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+.comparison-table th,
+.comparison-table td {
+  vertical-align: middle;
+}
+
+.comparison-table th.col-text,
+.comparison-table td.col-text {
+  text-align: right;
+}
+
+.comparison-table th.col-num,
+.comparison-table td.col-num {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.comparison-table .col-label,
+.comparison-table .col-meta {
+  display: block;
+  text-align: inherit;
+  line-height: 1.3;
+}
+
+.comparison-table .col-meta {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #5c6b73;
+}
+
+.comparison-table th.aggregate-start,
+.comparison-table td.aggregate-start {
+  border-inline-start: 2px solid var(--app-line);
+}
+
+.comparison-table th a {
+  color: inherit;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
 .table-warning {
   --bs-table-bg: #fff4ea;
   --bs-table-color: #7a3e12;
@@ -103,8 +151,16 @@ h1, h2, .navbar-brand {
    render in the expected order. */
 .ltr-numeric {
   direction: ltr;
-  unicode-bidi: embed;
-  display: inline-block;
+  unicode-bidi: isolate;
+}
+
+/* display:inline-block on a td/th drops that cell out of the table grid
+   and the header no longer sits on its column. */
+td.ltr-numeric,
+th.ltr-numeric {
+  display: table-cell;
+  text-align: center;
+  vertical-align: middle;
 }
 
 .price-sealed {

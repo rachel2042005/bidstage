@@ -92,6 +92,7 @@ def test_close_after_the_deadline_moves_the_tender_to_under_evaluation():
 
 
 def test_zero_bids_on_close_fails_the_tender():
+    """T-CMD-22 / FR-EVAL-11. No submitted bid closes, then fails."""
     store, _users, tenders, bids = _backend()
     tender_id = _open(store, tenders)
     close_tender(
@@ -101,11 +102,58 @@ def test_zero_bids_on_close_fails_the_tender():
         CloseTender(tender_id=tender_id, organizer_id=ORGANIZER_ID, explicit=True),
         now=PUBLISHED_AT,
     )
-    types = [event.event_type for event in store.read_stream(tender_id)]
-    assert types[-2:] == [TENDER_CLOSED_FOR_BIDS, TENDER_FAILED]
+    events = store.read_stream(tender_id)
+    assert [event.event_type for event in events[-2:]] == [TENDER_CLOSED_FOR_BIDS, TENDER_FAILED]
+    assert events[-2].event_data["bid_count"] == 0
+    assert events[-1].event_data["reason"] == "no_bids_submitted"
     dashboard = get_dashboard(tenders, ORGANIZER_ID)
     assert [item.tender_id for item in dashboard.failed] == [tender_id]
     assert dashboard.under_evaluation == ()
+
+
+def test_a_withdrawn_bid_does_not_count_as_submitted():
+    """T-CMD-23 / FR-EVAL-11. A withdrawn bid takes the zero-bid path."""
+    store, _users, tenders, bids = _backend()
+    tender_id = _open(store, tenders)
+    withdrawn = _bid(store, tenders, bids, tender_id, "sup-1")
+    bids.apply_withdrawn(withdrawn)
+    close_tender(
+        store,
+        tenders,
+        bids,
+        CloseTender(tender_id=tender_id, organizer_id=ORGANIZER_ID, explicit=True),
+        now=PUBLISHED_AT,
+    )
+    events = store.read_stream(tender_id)
+    assert [event.event_type for event in events[-2:]] == [TENDER_CLOSED_FOR_BIDS, TENDER_FAILED]
+    assert events[-2].event_data["bid_count"] == 0
+    assert events[-1].event_data["reason"] == "no_bids_submitted"
+    dashboard = get_dashboard(tenders, ORGANIZER_ID)
+    assert [item.tender_id for item in dashboard.failed] == [tender_id]
+    assert dashboard.under_evaluation == ()
+
+
+def test_a_remaining_submitted_bid_keeps_the_tender_under_evaluation():
+    """T-CMD-23 / FR-EVAL-11. One withdrawn bid does not hide a submitted one."""
+    store, _users, tenders, bids = _backend()
+    tender_id = _open(store, tenders)
+    _bid(store, tenders, bids, tender_id, "sup-1")
+    withdrawn = _bid(store, tenders, bids, tender_id, "sup-2")
+    bids.apply_withdrawn(withdrawn)
+    close_tender(
+        store,
+        tenders,
+        bids,
+        CloseTender(tender_id=tender_id, organizer_id=ORGANIZER_ID, explicit=True),
+        now=PUBLISHED_AT,
+    )
+    events = store.read_stream(tender_id)
+    assert events[-1].event_type == TENDER_CLOSED_FOR_BIDS
+    assert events[-1].event_data["bid_count"] == 1
+    assert TENDER_FAILED not in [event.event_type for event in events]
+    dashboard = get_dashboard(tenders, ORGANIZER_ID)
+    assert [item.tender_id for item in dashboard.under_evaluation] == [tender_id]
+    assert dashboard.failed == ()
 
 
 def test_close_rejects_a_draft_another_organizer_and_a_second_close():
@@ -315,6 +363,71 @@ def client(backend):
     return application.test_client()
 
 
+def test_owner_closes_an_open_tender_from_the_tender_page(client, backend):
+    """T-CMD-24 / FR-EVAL-11. Early close returns to the tender page."""
+    from app.domain.user import ORGANIZER
+    from tests.test_tenders import _sign_in
+
+    store, _users, tenders, bids = backend
+    tender_id = _open(store, tenders)
+    _bid(store, tenders, bids, tender_id)
+    _sign_in(client, ORGANIZER)
+    page = client.get(f"/organizer/tenders/{tender_id}").get_data(as_text=True)
+    assert "סגור מכרז להגשות" in page
+    assert "לסגור את המכרז להגשות עכשיו? לא ניתן יהיה להגיש הצעות נוספות." in page
+    assert "פתוח להצעות" in page
+
+    closed = client.post(f"/organizer/tenders/{tender_id}/close", follow_redirects=False)
+    assert closed.status_code == 302
+    assert f"/organizer/tenders/{tender_id}" in closed.headers["Location"]
+    assert "/comparison" not in closed.headers["Location"]
+    shown = client.get(closed.headers["Location"]).get_data(as_text=True)
+    assert "בהערכה" in shown
+    assert "סגור מכרז להגשות" not in shown
+    events = store.read_stream(tender_id)
+    assert events[-1].event_type == TENDER_CLOSED_FOR_BIDS
+    assert events[-1].event_data["bid_count"] == 1
+    comparison = client.get(f"/organizer/tenders/{tender_id}/comparison").get_data(as_text=True)
+    assert "סגור מכרז להגשות" not in comparison
+
+
+def test_closing_with_no_submitted_bids_shows_the_tender_as_failed(client, backend):
+    """T-CMD-24 / FR-EVAL-11. No submitted bid returns to a failed tender page."""
+    from app.domain.user import ORGANIZER
+    from tests.test_tenders import _sign_in
+
+    store, _users, tenders, _bids = backend
+    tender_id = _open(store, tenders)
+    _sign_in(client, ORGANIZER)
+    closed = client.post(f"/organizer/tenders/{tender_id}/close", follow_redirects=False)
+    assert closed.status_code == 302
+    assert f"/organizer/tenders/{tender_id}" in closed.headers["Location"]
+    assert "/comparison" not in closed.headers["Location"]
+    shown = client.get(closed.headers["Location"]).get_data(as_text=True)
+    assert "נכשל" in shown
+    assert "בהערכה" not in shown
+    assert "סגור מכרז להגשות" not in shown
+    events = store.read_stream(tender_id)
+    assert [event.event_type for event in events[-2:]] == [TENDER_CLOSED_FOR_BIDS, TENDER_FAILED]
+    assert events[-1].event_data["reason"] == "no_bids_submitted"
+
+
+def test_another_organizer_cannot_close_the_tender(client, backend):
+    """T-CMD-24. Another organizer is rejected and the stream stays unchanged."""
+    from app.domain.user import ORGANIZER
+    from tests.test_tenders import _sign_in
+
+    store, _users, tenders, bids = backend
+    tender_id = _open(store, tenders)
+    _bid(store, tenders, bids, tender_id)
+    before = [event.event_type for event in store.read_stream(tender_id)]
+    _sign_in(client, ORGANIZER, user_id="org-2")
+    denied = client.post(f"/organizer/tenders/{tender_id}/close")
+    assert denied.status_code == 403
+    assert [event.event_type for event in store.read_stream(tender_id)] == before
+    assert TENDER_CLOSED_FOR_BIDS not in before
+
+
 def test_dashboard_and_comparison_pages_hide_prices_until_reveal(client, backend):
     from app.domain.user import ORGANIZER, SUPPLIER
     from app.events.event_types import QUALITY_ASSESSMENT_COMPLETED
@@ -342,14 +455,25 @@ def test_dashboard_and_comparison_pages_hide_prices_until_reveal(client, backend
     assert "2026-11-01" in home
     assert ">2</span> הצעות" in home
 
-    closed = client.post(f"/organizer/tenders/{tender_id}/close", follow_redirects=True)
-    sealed = closed.get_data(as_text=True)
-    assert closed.status_code == 200
+    closed = client.post(f"/organizer/tenders/{tender_id}/close", follow_redirects=False)
+    assert closed.status_code == 302
+    sealed_page = client.get(f"/organizer/tenders/{tender_id}/comparison")
+    sealed = sealed_page.get_data(as_text=True)
+    assert sealed_page.status_code == 200
     assert "חסום" in sealed
     assert "ספק א" in sealed
     assert "ספק ב" in sealed
     assert "900,000" not in sealed
     assert "700,000" not in sealed
+    assert "סגור מכרז להגשות" not in sealed
+    assert "מקום" in sealed
+    assert "100%" in sealed
+    assert "comparison-table" in sealed
+    assert 'td class="ltr-numeric"' not in sealed
+    header, _body = sealed.split("<tbody", 1)
+    first_row = _body.split("</tr>", 1)[0]
+    assert header.count("<th ") == 7
+    assert first_row.count("<td") == 7
 
     _sign_in(client, SUPPLIER, user_id="sup-a")
     forbidden = client.get(f"/organizer/tenders/{tender_id}/comparison")
@@ -382,6 +506,32 @@ def test_dashboard_and_comparison_pages_hide_prices_until_reveal(client, backend
     assert body.index("ספק ב") < body.index("ספק א")
     assert "84.4" in body
     assert "80.3" in body
+
+
+def test_comparison_renders_a_requirement_score_in_its_own_column(client, backend):
+    """FR-TBL-1. A stored category score is the cell under that requirement."""
+    from app.domain.user import ORGANIZER
+    from app.queries.get_tender import get_tender_details
+    from tests.test_tenders import _sign_in
+
+    store, _users, tenders, bids = backend
+    tender_id = _open(store, tenders)
+    bid_id = _bid(store, tenders, bids, tender_id)
+    details = get_tender_details(tenders, tender_id)
+    assert details is not None
+    requirement = details.requirements[0]
+    bids.remember_requirement_score(
+        tender_id, bid_id, requirement.requirement_id, score=7, weight=100
+    )
+    _sign_in(client, ORGANIZER)
+    client.post(f"/organizer/tenders/{tender_id}/close")
+    page = client.get(f"/organizer/tenders/{tender_id}/comparison").get_data(as_text=True)
+    assert "סגור מכרז להגשות" not in page
+    assert '<span class="col-label">מקום</span>' in page
+    assert '<span class="ltr-numeric">7</span>' in page
+    assert '<span class="col-meta ltr-numeric">100%</span>' in page
+    header, body = page.split("<tbody", 1)
+    assert header.count("<th ") == body.split("</tr>", 1)[0].count("<td")
 
 
 def test_dashboard_chart_payload_matches_the_groups_and_hides_other_organizers(client, backend):

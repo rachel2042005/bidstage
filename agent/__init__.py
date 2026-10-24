@@ -1,7 +1,8 @@
 """Deep Agent package. See specs/05-agent-spec.md.
 
-  runner.py        — poll loop + Evaluate Now consumer
-  orchestrator.py  — planner; claims a bid, dispatches sub-agents, finalizes
+  runner.py        — python -m agent.runner
+  worker.py        — run_forever (drain, idle sleep, stop flag)
+  orchestrator.py  — score_bid (steps 2–6 for VENUE, CONTENT, HOST, MUSIC, EXPERIENCE)
   subagents/       — one per requirement type: VENUE, CONTENT, HOST, MUSIC,
                      EXPERIENCE (VENUE also covers safety and capacity)
 

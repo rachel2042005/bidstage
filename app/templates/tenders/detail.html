@@ -75,9 +75,9 @@
   {% endif %}
 </dl>
 {% endif %}
-{% if can_close %}
-<form method="post" action="{{ url_for('comparison.close', tender_id=details.tender.tender_id) }}" class="mb-3">
-  <button type="submit" class="btn btn-outline-danger">סגירה להצעות</button>
+{% if can_close and details.tender.status == 'open' %}
+<form method="post" action="{{ url_for('comparison.close', tender_id=details.tender.tender_id) }}" class="mb-3" onsubmit="return confirm('לסגור את המכרז להגשות עכשיו? לא ניתן יהיה להגיש הצעות נוספות.');">
+  <button type="submit" class="btn btn-outline-danger">סגור מכרז להגשות</button>
 </form>
 {% endif %}
 {% if show_comparison %}

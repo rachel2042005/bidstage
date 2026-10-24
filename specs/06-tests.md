@@ -35,19 +35,22 @@ Reproduces `04-scoring-model.md` exactly. These are table-driven.
 | `T-SC-6` | Final score B, α = 0.6 | 84.4 |
 | `T-SC-7` | Ranking order | B above A |
 | `T-SC-8` | Disqualified cheaper bid excluded from the price pool | A and B unchanged from `T-SC-3`/`T-SC-5` |
-| `T-SC-9` | Same bid set with the disqualified price wrongly included | A 71.4, B 72.9 — asserts the variant in `04` §7 and guards the boundary |
+| `T-SC-9` | Same bid set with the disqualified price wrongly included | A 71.4, B 73.0 — asserts the variant in `04` §7 and guards the boundary |
 | `T-SC-10` | Threshold requirement scoring 5 | disqualified, remaining requirements unscored |
 | `T-SC-11` | Threshold requirement scoring 6 | passes |
 | `T-SC-12` | Quality 59.9 with all thresholds passed | disqualified by floor |
 | `T-SC-13` | Quality exactly 60.0 | qualified |
-| `T-SC-14` | α = 1 | final equals quality |
-| `T-SC-15` | α = 0 | final equals price score, floor still enforced |
-| `T-SC-16` | Tie on final score | higher quality ranks first |
-| `T-SC-17` | Tie on final and quality | earlier submission ranks first |
+| `T-SC-14` | α = 1 on the worked example | A ranks above B; finals are 82.0 and 74.0; price scores still display as 77.8 and 100.0 |
+| `T-SC-15` | α = 0, with a disqualified ₪500,000 bid in the input | B ranks above A; finals are 100.0 and 77.8; the disqualified bid is absent |
+| `T-SC-16` | Finals both 84.4 (quality 82 at ₪1,000,000 and quality 74 at ₪880,000), α = 0.6 | higher quality ranks first, even though it was later and second in the input |
+| `T-SC-17` | Equal final and equal quality | earlier UTC `submitted_at` ranks first, even though it was second in the input |
 | `T-SC-18` | Weights summing to 99 or 101 | publication rejected (`FR-ENT-3`) |
 | `T-SC-19` | No rounding before final multiplication | full-precision path differs from a pre-rounded one and the former is used |
+| `T-SC-20` | `price_score` given 0, −1, or a bool | `ValueError`; a price must be an integer greater than 0 |
 
 `T-SC-9` is the most valuable test in the file: it is the only one that fails if someone "simplifies" the price pool back to all bids.
+
+`tests/test_scoring.py` covers `T-SC-1` and `T-SC-2` at `quality`. The expected values are the literals 82.0 and 74.0. The same file covers `price_score`, `final_score`, and `rank_bids`: `T-SC-4` and `T-SC-3` for the price scores 100.0 and 77.8, `T-SC-6` and `T-SC-5` for the finals 84.4 and 80.3, `T-SC-19` so A's final is not `0.6 × 82 + 0.4 × 77.8`, `T-SC-7` for B ranking above A, `T-SC-8` and `T-SC-9` for the qualified-only pool, `T-SC-14` and `T-SC-15` for α = 1 and α = 0, `T-SC-16` and `T-SC-17` for the quality and submission tie-breaks, and `T-SC-20` for a non-positive price. Displayed figures use `round(value, 1)`. The computed values stay at full precision.
 
 ---
 
@@ -102,8 +105,28 @@ One test per invariant in `03-domain-events.md` §3, each constructing an illega
 | `T-CMD-10` | `OverrideScore` with empty justification | Rejected (`FR-EVAL-7`) |
 | `T-CMD-11` | Override that changes the qualified set | Every bid's price score recomputed, not just the overridden one (`04` §9 step 4) |
 | `T-CMD-12` | Any query handler touching `Events` | Absent; asserted by static check (`NFR-CQRS-2`) |
+| `T-CMD-13` | `QualityAssessmentCompleted` at quality 90.0 | Next bid version; `rm_bid_assessment.status` is `qualified`; requirement rows match the payload |
+| `T-CMD-14` | Threshold `BidDisqualified` | `reason` `threshold`, `failed_requirement_id` set, `quality_score` null, no requirement rows |
+| `T-CMD-15` | Second terminal command for one bid | Raises; the bid stream stays one event long |
+| `T-CMD-16` | `RevealPrices` while a bid is not terminal | Raises; the tender stream gains nothing (`INV-3`) |
+| `T-CMD-17` | Worked example, both bids qualified, α = 0.6 | `PricesRevealed` then `FinalRankingCalculated`; B rank 1 at 84.4, A rank 2 at 80.3 |
+| `T-CMD-18` | Every bid disqualified | `TenderFailed` with `reason` `no_qualified_bids`; no `PricesRevealed` |
+| `T-CMD-19` | `QualityAssessmentCompleted` after the bid was queued | Queue `status` is `completed`; a following claim returns nothing |
+| `T-CMD-20` | Closed tender, `BidSubmitted`, requirement weight 40, score 9 | Next bid version is `RequirementScored`; `rm_requirement_score` stores weight 40 |
+| `T-CMD-21` | Venue already scored at 9 weight 40, then qualified completion also names content at 8 weight 60 | Completion appends; both score rows exist; the venue row stays 9 and 40 |
+| `T-CMD-22` | `CloseTender` with no bid still submitted | `TenderClosedForBids` with `bid_count` 0, then `TenderFailed` reason `no_bids_submitted`; status `failed` (`FR-EVAL-11`) |
+| `T-CMD-23` | One submitted bid and one withdrawn bid, closed before the deadline | `TenderClosedForBids` with `bid_count` 1 and no `TenderFailed`. The withdrawn bid alone takes the `T-CMD-22` path |
+| `T-CMD-24` | Owner posts `/organizer/tenders/<id>/close` on an open tender | Confirmation and "סגור מכרז להגשות" are shown only while open. Redirects to the tender page with "בהערכה", or "נכשל" when no bid remains. Another organizer receives 403 and the stream is unchanged |
+| `T-QRY-1` | `rm_tender_detail` plus two `rm_requirement` rows and one `approved_hosts` name | `fetch` returns `tender.type` from `event_type`, the requirements in `position` order, and that host name |
+| `T-QRY-2` | A tender id with no `rm_tender_detail` row | `fetch` returns `None` |
 
 `T-CMD-11` targets the subtle bug in override handling: reordering is systemic, not local.
+
+`tests/test_assessment_sql.py` covers `T-CMD-13` through `T-CMD-18` against SQL Server. The suite skips when `SOMEE_DB_CONNECTION_STRING` is unset. Each test uses a fresh stream id and does not delete. `SqlCompleteAssessmentHandler` is the seam for the terminal events. `SqlRevealPricesHandler` is the seam for reveal and `TenderFailed`. Streams are read back through `EventStore`. Read models are read with `SELECT`.
+
+`tests/test_tender_requirements_query.py` covers `T-QRY-1` and `T-QRY-2` at `SqlTenderRequirementsQuery.fetch`. The suite skips when `SOMEE_DB_CONNECTION_STRING` is unset. The tender id is fresh. The host name is fresh because `approved_hosts` is shared and nothing is deleted. The test inserts the read-model rows directly; `PublishTender` is the later writer.
+
+`tests/test_score_requirement.py` covers `T-CMD-20`, `T-AG-4`, `T-INV-2`, and `T-INV-4` at `SqlScoreRequirementHandler.handle`. The suite skips when `SOMEE_DB_CONNECTION_STRING` is unset. Stream ids are fresh. Nothing is deleted. The requirement row is inserted directly; its weight 40 is the expected score-row weight. `T-AG-4` retries with score 4 and rubric `venue-2`; the stored event stays score 9 at version 2. `T-INV-4` reveals amount `900000` and leaves that sealed event on the bid.
 
 ---
 
@@ -129,7 +152,7 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 
 | ID | Case | Expected |
 | --- | --- | --- |
-| `T-AG-1` | `rm_bid_for_assessment` schema | No price column exists (`NFR-AGT-4`, `05` §2) |
+| `T-AG-1` | `rm_bid_for_assessment` schema | Columns are `bid_id`, `tender_id`, `supplier_id`, `concept`, `responses_json`, `status`, `queued_at`, `claimed_at`. No column name contains `price` (`NFR-AGT-4`, `05` §2) |
 | `T-AG-2` | `get_tender_requirements` response | Contains no price field for any bid |
 | `T-AG-3` | `get_tender_requirements` on a tender with a `HOST` requirement | Includes `approved_hosts` |
 | `T-AG-4` | `submit_requirement_score` called twice for one pair | Second call is a no-op; one `RequirementScored` exists |
@@ -139,10 +162,72 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 | `T-AG-8` | Threshold requirement scores 4 | Orchestrator stops; later requirements never dispatched (`T-SC-10` counterpart) |
 | `T-AG-9` | Transient API failure three times | Bid released unclaimed; no partial assessment persisted |
 | `T-AG-10` | Crash after two of five scores | Next cycle resumes at the third requirement |
-| `T-AG-11` | Two poll cycles overlapping | Bid claimed once; no double processing (`05` §3) |
-| `T-AG-12` | Host absent from the approved list | Score 0 |
-| `T-AG-13` | Venue capacity below the regulatory limit for the declared attendance | Score capped in the 0–4 band (`05` §5) |
+| `T-AG-11` | Two connections claim one pending bid | One receives that bid; the other receives nothing (`05` §3) |
+| `T-AG-12` | A real host is named and is absent from the approved list; the model proposes 9 | Score is 1 or 2 (`05` §5) |
+| `T-AG-13` | A retrieved police, fire, licence, or accessibility obligation is breached, and the model proposes 9 | Score is an integer in 0–4 (`05` §5) |
 | `T-AG-14` | Any arithmetic inside an agent module | Absent; quality computed in `app/domain/scoring.py` (project rule 2) |
+| `T-AG-16` | Official capacity is verified and below the tender figure; no retrieved obligation is breached; the model proposes 9 | Score is 3 or 4 |
+| `T-AG-17` | The supplier's capacity claim is disproved; the model proposes 9 | Score is 0 |
+| `T-AG-18` | The capacity claim is inconclusive; the model proposes 9 | Score is 5 or 6 |
+| `T-AG-19` | Capacity is verified, meets the tender, and breaches nothing; the model proposes 4 | Score is an integer in 7–10 |
+| `T-AG-20` | Orchestrator scores a tender whose `VENUE` threshold scores 9, followed by `CONTENT` and `EXPERIENCE` | Three `RequirementScored` commands, in list order; each `rubric_version` is that type's stored rubric |
+| `T-AG-21` | Schedule and concept are both present and on-theme, the central names are independently verified, and the model proposes 4 | Score is 9 or 10 (`05` §5) |
+| `T-AG-22` | The schedule contradicts itself beside a relevant concept, and the model proposes 9 | Score is 3 or 4 |
+| `T-AG-23` | A named performer or work is disproved, and the model proposes 9 | Score is 0 |
+| `T-AG-24` | Three or more outdoor or stadium productions are verified, none are disproved, and the model proposes 4 | Score is 9 or 10 (`05` §5) |
+| `T-AG-25` | Outdoor or stadium events are claimed, none are verified and none are disproved, and the model proposes 9 | Score is 5 or 6 |
+| `T-AG-26` | One production is disproved while three outdoor shows are verified, and the model proposes 9 | Score is 0 |
+| `T-AG-27` | `run_once` claims one bid whose three requirements score 9 | `QualityAssessmentCompleted` with quality 90.0; a second claim returns nothing |
+| `T-AG-28` | The `VENUE` threshold scores 4 | `BidDisqualified` with `reason` `threshold` and `failed_requirement_id`; later models are not assessed |
+| `T-AG-29` | Every requirement is scored and quality is 50.0 | `BidDisqualified` with `reason` `quality_floor` and `quality_score` 50.0; no `failed_requirement_id` |
+| `T-AG-30` | Primary and backup are both on the approved list, neither has a same-date conflict, and the model proposes 4 | Score is 9 or 10 (`05` §5) |
+| `T-AG-31` | The primary host is listed and has a same-date conflict, the backup is also listed, and the model proposes 9 | Score is 3 or 4 |
+| `T-AG-32` | A live performance has a complete rider, the central acts are verified, and the model proposes 4 | Score is 9 or 10 (`05` §5) |
+| `T-AG-33` | The tender requires a live performance and the bid has none, and the model proposes 9 | Score is 3 or 4 |
+| `T-AG-34` | A named act is disproved while the live program and rider would otherwise meet the 9–10 rule, and the model proposes 9 | Score is 0 |
+| `T-AG-35` | Orchestrator scores `VENUE`, `CONTENT`, `HOST`, `MUSIC`, and `EXPERIENCE` in that order, and the `VENUE` threshold scores 9 | Five `RequirementScored` commands, in list order; each `rubric_version` is that type's stored rubric |
+| `T-AG-36` | Two bids queued, then an empty claim | Both bids run with no sleep between them; one sleep of the poll interval follows the empty claim |
+| `T-AG-37` | Queue is empty | `run_once` is entered; `sleep` receives the poll interval |
+| `T-AG-38` | Stop flag set during the first bid | That bid finishes; the next bid is not claimed |
+| `T-AG-39` | One pending bid whose venue answer is `היכל` | `claim` returns that bid with `answers == {"req-venue": "היכל"}`; the row is `claimed` with `claimed_at` set; the next claim returns nothing |
+| `T-AG-40` | `PriceOfferSealed` amount `900000` is on the bid stream, and the queue row is written from `BidSubmitted` fields | The claimed work and every queue-row value leave out `900000` |
+| `T-AG-41` | `main(["--once"])` with a fake runtime | `run_once` is called once with that queue, `complete`, and the five models; `run_forever` is not called |
+| `T-AG-42` | `main([])` with a fake runtime | `run_forever` receives that runtime and `interval` equal to `settings.agent_poll_seconds`; `main` does not call `run_once` |
+| `T-AG-43` | A claimed row whose `claimed_at` is strictly older than the timeout | `release_stalled_claims` sets `status` to `pending` and `claimed_at` to null; the next `claim` returns that bid |
+| `T-AG-44` | A claimed row whose `claimed_at` is inside the timeout | The row stays `claimed` with `claimed_at` set; the next `claim` returns nothing |
+| `T-AG-45` | `TAVILY_API_KEY` is empty | `search` returns `()` and does not call Tavily |
+| `T-AG-46` | Tavily returns one hit for `היכל` | The page is `url` `https://example.com/hall`, `title` `Hall`, `content` `5000 seats`. The request is `POST https://api.tavily.com/search` and carries that query and the key |
+| `T-AG-47` | Venue model JSON with `proposed_score` 4 | `assess_venue` returns that `VenueAssessment` and the call's temperature is 0. Score 11 and `true` are rejected |
+| `T-AG-48` | Content model JSON with `proposed_score` 4 | `assess_content` returns that `ContentAssessment` at temperature 0 |
+| `T-AG-49` | Host model JSON with `proposed_score` 4 | `assess_host` returns that `HostAssessment` at temperature 0 |
+| `T-AG-50` | Music model JSON with `proposed_score` 4 | `assess_music` returns that `MusicAssessment` at temperature 0 |
+| `T-AG-51` | Experience model JSON with `proposed_score` 4 | `assess_experience` returns that `ExperienceAssessment` at temperature 0 |
+| `T-AG-52` | `assess` is handed each material type | The same assessor returns that type's assessment |
+| `T-AG-53` | `AGENT_MODEL_PROVIDER` | `ollama` selects `qwen3:8b` and `http://localhost:11434/v1`. `openai` selects `gpt-4o-mini`. `ollama` plus `AGENT_MODEL=gpt-4o-mini` is rejected |
+| `T-AG-54` | `build_runtime(settings, requirements=..., submit=...)` with stand-ins for the queue and the vector store | `search` is the rubric service, `web.search` returns `()` when the key is empty, and one assessor is all five model ports. `requirements` and `submit` are the objects passed in |
+| `T-AG-55` | `build_runtime(settings)` with stand-ins for the queue and the vector store, and no `requirements` or `submit` | Those two are the SQL wrappers. The stand-in queue and rubrics are kept. No SQL call |
+
+`tests/test_mcp_server.py` covers `T-AG-2` and `T-AG-3` against an in-memory `GetTenderRequirements` query. A price column on the view is absent from the payload. A `HOST` requirement includes the host list the query supplied. A blank id raises `ValueError` before lookup. An unknown id raises `TenderNotFound`. The same file covers `submit_requirement_score`: the dispatched `ScoreRequirement` is a known literal and the handler's `{"accepted": True, "event_version": 3}` is returned unchanged; scores outside 0–10, bools, and non-integers raise `ValueError` (`T-AG-5`, `T-AG-6`); blank text fields raise `ValueError` before dispatch; `ScoringRejected` propagates. `T-AG-4` is the SQL handler in `tests/test_score_requirement.py`: the second call returns the stored version and appends nothing.
+
+`tests/test_venue_evaluator.py` covers `T-AG-13`, `T-AG-16`, `T-AG-17`, `T-AG-18`, and `T-AG-19` at `evaluate_venue`. Regulations, web search, and the model are fakes. The model reports the constraining finding only when it was given the whole rubric plus the regulation text and the web page. `T-AG-19` proposes 4, which sits below the 7–10 band.
+
+`tests/test_content_evaluator.py` covers `T-AG-21`, `T-AG-22`, and `T-AG-23` at `evaluate_content`. Past concepts, web search, and the model are fakes. `search_bids` returns the precedent text only when `tender_id` is omitted. The model reports the constraining finding only when it was given the whole rubric plus that text and the web page. `T-AG-21` proposes 4, which sits below the 9–10 band. `T-AG-23` reports the schedule and concept as sound and the named performer as disproved, and the score is 0.
+
+`tests/test_experience_evaluator.py` covers `T-AG-24`, `T-AG-25`, and `T-AG-26` at `evaluate_experience`. Portfolio search, web search, and the model are fakes. `search_portfolios` returns the supplier's text only when `supplier_id` matches. The model reports the constraining finding only when it was given the whole rubric plus that text and the web page. `T-AG-24` proposes 4, which sits below the 9–10 band. `T-AG-26` also reports three verified outdoor shows, so a first-match that skips the disproved-production rule would pin the score into 9–10.
+
+`tests/test_host_evaluator.py` covers `T-AG-12`, `T-AG-30`, and `T-AG-31` at `evaluate_host`. Web search and the model are fakes. Membership is `strip().casefold()` inside the function. The model reports the extracted names only when it was given the whole rubric, the approved list, and the web page. `T-AG-12` proposes 9 for a named host who is not on the list, which sits above the 1–2 band. `T-AG-30` proposes 4, which sits below the 9–10 band, and the extracted names differ from the list by case and surrounding spaces. `T-AG-31` also lists the backup and reports no backup conflict, so a first-match that skips the same-date conflict rule would pin the score into 9–10.
+
+`tests/test_music_evaluator.py` covers `T-AG-32`, `T-AG-33`, and `T-AG-34` at `evaluate_music`. Past concepts, web search, and the model are fakes. `search_bids` returns the precedent text only when `tender_id` is omitted. The model reports the constraining finding only when it was given the whole rubric plus that text and the web page. `T-AG-32` proposes 4, which sits below the 9–10 band. `T-AG-34` reports a live performance and a complete rider and a disproved act, and the score is 0.
+
+`tests/test_orchestrator.py` covers `T-AG-20`, `T-AG-8`, and `T-AG-35` at `score_bid`. `get_tender_requirements` and `submit_requirement_score` run against in-memory doubles. Each rubric is loaded through `SemanticSearchService` from an in-memory store. Portfolio search, regulation search, bid search, web search, and the models are fakes. A model reports a score of 9 only when its requirement, the tender, the whole rubric, and its evidence arrived. `T-AG-20` keeps `VENUE` as a threshold that scores 9, so `CONTENT` and `EXPERIENCE` are still dispatched. `T-AG-8` makes that same threshold score 4; the later models are not assessed. `T-AG-35` walks `VENUE`, `CONTENT`, `HOST`, `MUSIC`, and `EXPERIENCE`, with that same threshold scoring 9, so all five are submitted. The `HOST` and `MUSIC` models passed by `T-AG-20` and `T-AG-8` fail if they are called.
+
+`tests/test_runner.py` covers `T-AG-27`, `T-AG-28`, and `T-AG-29` at `run_once`. The queue, the score handler, and the completion handler are in-memory. `T-AG-27` uses weights 40/30/30 and three scores of 9, so quality is the literal 90.0. `T-AG-29` uses scores 5, 4, and 6, which the pinned bands can produce, and quality is the literal 50.0.
+
+`tests/test_worker.py` covers `T-AG-36`, `T-AG-37`, and `T-AG-38` at `run_forever`. The queue, `run_once`, and `sleep` are fakes. No SQL, Chroma, or model client is opened. The poll interval in these tests is 5 seconds.
+
+`tests/test_assessment_queue.py` covers `T-AG-1`, `T-AG-39`, `T-AG-40`, `T-AG-11`, `T-CMD-19`, `T-AG-43`, and `T-AG-44` against SQL Server. The suite skips when `SOMEE_DB_CONNECTION_STRING` is unset. `T-AG-39` enqueues the venue answer `היכל`. `T-AG-40` seals `900000` on the bid stream. `T-AG-11` claims one pending bid from two connections. `T-AG-43` ages that row past a timeout which still covers every other claim, so the sweep returns that bid alone and the next claim takes it. `T-AG-44` releases against that same kind of timeout immediately after claim.
+
+`tests/test_agent_ports.py` covers `T-AG-45` through `T-AG-55` without Tavily, OpenAI, Ollama, SQL Server, or Chroma. `T-AG-46` posts through a stand-in opener. `T-AG-47` through `T-AG-52` return a stand-in completion. `T-AG-54` passes stand-ins for the queue and the vector store. `T-AG-55` omits `requirements` and `submit` and keeps those same stand-ins.
 
 ### Score consistency
 
@@ -164,6 +249,8 @@ LLM and Tavily are stubbed; no test spends money or depends on the network.
 | `T-VEC-4` | Two processes against the Chroma server concurrently | Both succeed; no lock (`ENV-4`) |
 | `T-VEC-5` | Vector store accessed outside `infrastructure/vector_store.py` | `chromadb` imported nowhere else (`NFR-VEC-5`) |
 | `T-VEC-6` | Seed script run twice | Idempotent; no duplicate documents |
+
+`tests/test_semantic_search_service.py` covers the service boundary. `T-VEC-3` asserts `get_rubric` returns the whole document stored at `rubric:{TYPE}`. Regulation search asserts cosine similarity as a literal: identical unit vectors score `1.0`, orthogonal unit vectors score `0.0`. Bid search passes `tender_id` into the store filter before `top_k` neighbours are chosen (`FR-SRCH-4`); a closer bid on another tender must not occupy the only result slot. Organizer ownership remains `T-AUTH-4`.
 
 ---
 
@@ -233,13 +320,13 @@ Run before any demo. Each maps to a constraint in `01-requirements.md` §4.
 | Comparison table | `FR-TBL-1` … `FR-TBL-4` | `T-E2E-2`, `T-E2E-5`, `T-SC-7` |
 | Dashboard | `FR-DASH-1` … `FR-DASH-5` | `T-E2E-6` |
 | Data entry | `FR-ENT-1` … `FR-ENT-8` | `T-CMD-1` … `T-CMD-7`, `T-SC-18` |
-| Evaluation and award | `FR-EVAL-1` … `FR-EVAL-10` | `T-SC-10` … `T-SC-13`, `T-AG-8`, `T-E2E-1`, `T-E2E-3`, `T-E2E-4` |
+| Evaluation and award | `FR-EVAL-1` … `FR-EVAL-11` | `T-SC-10` … `T-SC-13`, `T-AG-8`, `T-E2E-1`, `T-E2E-3`, `T-E2E-4`, `T-CMD-22` … `T-CMD-24` |
 | Notifications | `FR-NOT-1` … `FR-NOT-4` | `T-CMD-9`, `T-E2E-1` |
 | Vector database | `NFR-VEC-1` … `NFR-VEC-5` | `T-VEC-1` … `T-VEC-6` |
 | CQRS | `NFR-CQRS-1` … `NFR-CQRS-3` | `T-CMD-8`, `T-CMD-12`, `T-ES-4` |
 | Event Sourcing | `NFR-ES-1` … `NFR-ES-5` | `T-ES-1` … `T-ES-6`, `T-INV-1` … `T-INV-10`, `T-E2E-7` |
 | External MCP | `NFR-MCP-1`, `NFR-MCP-2` | `T-CMD-9`, `T-E2E-1` |
 | Own tools | `NFR-TOOL-1` | `T-AG-2` … `T-AG-5` |
-| Deep Agent | `NFR-AGT-1` … `NFR-AGT-4` | `T-AG-1` … `T-AG-15` |
+| Deep Agent | `NFR-AGT-1` … `NFR-AGT-4` | `T-AG-1` … `T-AG-35` |
 | Determinism | `NFR-DET-1` | `T-AG-14`, `T-SC-1` … `T-SC-19` |
 | Environment | `ENV-1` … `ENV-6` | `T-ENV-1` … `T-ENV-8` |

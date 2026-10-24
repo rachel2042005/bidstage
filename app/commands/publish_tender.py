@@ -50,6 +50,7 @@ class RequirementSpec:
     weight: int
     is_threshold: bool
     description: str
+    requirement_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ class PublishTender:
     requirements: tuple[RequirementSpec, ...] = ()
     tender_id: str | None = None
     publish: bool = False
+    assigned_id: str | None = None
 
 
 def publish_tender(store, tenders, command: PublishTender, *, now: datetime | None = None) -> str:
@@ -76,7 +78,8 @@ def publish_tender(store, tenders, command: PublishTender, *, now: datetime | No
 
 
 def _create(store, tenders, command: PublishTender, now: datetime) -> str:
-    tender_id = str(uuid.uuid4())
+    assigned = (command.assigned_id or "").strip()
+    tender_id = assigned or str(uuid.uuid4())
     created = _created_payload(command, now)
     requirement_payloads = [
         _requirement_payload(spec) for spec in command.requirements
@@ -198,8 +201,9 @@ def _requirement_payload(spec: RequirementSpec) -> dict:
     description = spec.description.strip()
     if len(description) > 4000:
         raise InvalidTenderError("description is required")
+    requirement_id = (spec.requirement_id or "").strip() or str(uuid.uuid4())
     return {
-        "requirement_id": str(uuid.uuid4()),
+        "requirement_id": requirement_id,
         "type": spec.requirement_type,
         "weight": weight,
         "is_threshold": spec.is_threshold,
