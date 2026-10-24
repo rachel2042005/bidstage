@@ -6,6 +6,7 @@ bootstrap.init() runs before anything else imports an HTTPS client (ENV-1).
 from __future__ import annotations
 
 import logging
+import secrets
 
 from app import bootstrap
 
@@ -52,6 +53,9 @@ def create_app(
         db_ready = False
     app = Flask(__name__, template_folder="app/templates", static_folder="app/static")
     app.config["SECRET_KEY"] = secret
+    # The signed cookie survives a restart. This value does not, so an old
+    # cookie cannot sign the visitor back in.
+    app.config["SESSION_BOOT_ID"] = secrets.token_hex(16)
 
     if event_store is not None and users is not None:
         if tenders is None:

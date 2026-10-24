@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 
 from app.commands.authenticate_user import AuthenticateUser, authenticate_user
 from app.commands.register_user import RegisterUser, register_user
@@ -36,10 +45,20 @@ def _validation_message(detail: str) -> str:
 
 def _put_session(user_id: str, email: str, display_name: str, role: str) -> None:
     session.clear()
+    session.permanent = False
     session["user_id"] = user_id
     session["email"] = email
     session["display_name"] = display_name
     session["role"] = role
+    session["boot_id"] = current_app.config["SESSION_BOOT_ID"]
+
+
+@bp.before_app_request
+def drop_session_from_previous_process() -> None:
+    if not session.get("user_id"):
+        return
+    if session.get("boot_id") != current_app.config.get("SESSION_BOOT_ID"):
+        session.clear()
 
 
 @bp.get("/register")

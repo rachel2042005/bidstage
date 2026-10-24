@@ -270,6 +270,54 @@ def test_wrong_login_returns_401_and_keeps_the_typed_email(client, app):
     assert USER_LOGGED_IN not in [event.event_type for event in store.read_all()]
 
 
+def test_logout_ends_the_session_and_a_restart_does_not_restore_it(client):
+    """A cookie from an earlier process is not a login. Logout clears this one."""
+    client.post(
+        "/register",
+        data={
+            "email": "org@example.com",
+            "password": PLAINTEXT,
+            "display_name": "מארגנת",
+            "role": ORGANIZER,
+        },
+    )
+    assert client.get("/organizer/").status_code == 200
+
+    logged_out = client.get("/logout", follow_redirects=False)
+    assert logged_out.status_code == 302
+    assert "/login" in logged_out.headers["Location"]
+    again = client.get("/organizer/", follow_redirects=False)
+    assert again.status_code == 302
+    assert "/login" in again.headers["Location"]
+
+    signed_in = client.post(
+        "/login",
+        data={"email": "org@example.com", "password": PLAINTEXT},
+        follow_redirects=False,
+    )
+    assert signed_in.status_code == 302
+    set_cookie = signed_in.headers.get("Set-Cookie", "")
+    assert "Max-Age" not in set_cookie
+    assert "Expires" not in set_cookie
+    assert client.get("/organizer/").status_code == 200
+
+    cookie_name = client.application.config["SESSION_COOKIE_NAME"]
+    cookie = client.get_cookie(cookie_name)
+    assert cookie is not None
+    store, users, tenders, bids = client.application.extensions["backend"]
+    restarted = create_app(event_store=store, users=users, tenders=tenders, bids=bids)
+    restarted.config["TESTING"] = True
+    restarted.config["SECRET_KEY"] = client.application.config["SECRET_KEY"]
+    fresh = restarted.test_client()
+    fresh.set_cookie(cookie_name, cookie.value)
+    restored = fresh.get("/organizer/", follow_redirects=False)
+    assert restored.status_code == 302
+    assert "/login" in restored.headers["Location"]
+    home = fresh.get("/")
+    assert home.status_code == 200
+    assert "מארגנת" not in home.get_data(as_text=True)
+
+
 def test_login_logout_round_trip(client):
     client.post(
         "/register",

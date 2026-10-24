@@ -84,6 +84,9 @@ def _sign_in(client, role: str, user_id: str = ORGANIZER_ID) -> None:
         sess["role"] = role
         sess["email"] = f"{role}@example.com"
         sess["display_name"] = "נעמה"
+        boot_id = client.application.config.get("SESSION_BOOT_ID")
+        if boot_id is not None:
+            sess["boot_id"] = boot_id
 
 
 @pytest.fixture

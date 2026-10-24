@@ -189,27 +189,26 @@ def test_select_winner_rejects_a_disqualified_bid_and_returns_both_emails():
         )
 
 
-def test_owner_can_override_and_award_and_others_get_403(client, backend):
+def test_owner_can_award_and_others_get_403(client, backend):
     store, users, tenders, bids = backend
     _people(users)
-    tender_id, bid_a, bid_b, content_id = _publish_rank(store, tenders, bids)
+    tender_id, bid_a, bid_b, _content_id = _publish_rank(store, tenders, bids)
     _sign_in(client, ORGANIZER, user_id="org-1")
     page = client.get(f"/organizer/tenders/{tender_id}/comparison")
     body = page.get_data(as_text=True)
     assert page.status_code == 200
-    assert "דריסת ציון" in body
     assert "בחירת זוכה" in body
-    assert 'class="agent-score">9' in body
+    assert "דריסת ציון" not in body
+    assert "נימוק" not in body
+    assert 'class="ltr-numeric">9' in body
     assert "פרטי המכרז" in body
+    missing = client.post(
+        f"/organizer/tenders/{tender_id}/bids/{bid_b}/score",
+        data={"requirement_id": "req", "new_score": "1", "justification": "לא זמין"},
+    )
+    assert missing.status_code == 404
 
     _sign_in(client, ORGANIZER, user_id="org-2")
-    before = [event.event_type for event in store.read_stream(bid_b)]
-    forbidden = client.post(
-        f"/organizer/tenders/{tender_id}/bids/{bid_b}/score",
-        data={"requirement_id": content_id, "new_score": "1", "justification": "לא בעל המכרז"},
-    )
-    assert forbidden.status_code == 403
-    assert [event.event_type for event in store.read_stream(bid_b)] == before
     award = client.post(
         f"/organizer/tenders/{tender_id}/winner",
         data={"bid_id": bid_a},
