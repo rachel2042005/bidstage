@@ -45,6 +45,11 @@ from app.domain.tender import (
 )
 from app.domain.user import ORGANIZER, SUPPLIER
 from app.queries.get_bid import active_bid, bid_count
+from app.queries.get_bid_comparison import (
+    build_winner_summary,
+    get_bid_comparison,
+    get_requirement_scores,
+)
 from app.queries.get_tender import get_tender_details
 from app.routes.access import current_user_id, require_role
 from app.routes.formatting import ISRAEL, format_datetime_local
@@ -111,6 +116,7 @@ def organizer_tender(tender_id: str):
     details = _details_for_owner(tender_id)
     with unit_of_work() as (_store, _users, _tenders, bids):
         count = bid_count(bids, tender_id)
+        winner = _winner_for(bids, details)
     return render_template(
         "tenders/detail.html",
         details=details,
@@ -119,6 +125,7 @@ def organizer_tender(tender_id: str):
         can_close=details.tender.status == OPEN,
         show_comparison=details.tender.status in {UNDER_EVALUATION, FAILED, DECIDED},
         bid_count=count,
+        winner=winner,
         back_url=url_for("pages.organizer_home"),
         back_label="חזרה למכרזים שלי",
     )
@@ -236,6 +243,19 @@ def supplier_tender(tender_id: str):
         own_bid=own is not None,
         back_url=url_for("pages.supplier_home"),
         back_label="חזרה למכרזים הפתוחים",
+    )
+
+
+def _winner_for(bids, details):
+    if details.tender.status != DECIDED or not details.tender.winner_bid_id:
+        return None
+    tender_id = details.tender.tender_id
+    return build_winner_summary(
+        details.tender,
+        details.requirements,
+        get_bid_comparison(bids, tender_id),
+        get_requirement_scores(bids, tender_id),
+        REQUIREMENT_TYPE_LABELS,
     )
 
 

@@ -6,8 +6,10 @@ dbo.rm_requirement_score. The query never reads dbo.events.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import Decimal
 
+from app.domain.tender import DECIDED
 from app.projections.bids import ComparisonRow, RequirementScoreView
 
 
@@ -33,6 +35,47 @@ def get_requirement_scores(bids, tender_id: str) -> dict[str, dict[str, Requirem
     if reader is None:
         return {}
     return reader(tender_id)
+
+
+@dataclass(frozen=True)
+class WinnerCategory:
+    label: str
+    score: int
+
+
+@dataclass(frozen=True)
+class WinnerSummary:
+    supplier_name: str
+    final_score: Decimal
+    price_amount: int
+    categories: tuple[WinnerCategory, ...]
+
+
+def build_winner_summary(tender, requirements, rows, category_scores, type_labels) -> WinnerSummary | None:
+    """The awarded supplier, or nothing while the tender is still open."""
+    if tender.status != DECIDED or not tender.winner_bid_id:
+        return None
+    row = next((item for item in rows if item.bid_id == tender.winner_bid_id), None)
+    if row is None or row.final_score is None or row.price_amount is None:
+        return None
+    scores = category_scores.get(row.bid_id, {})
+    categories = []
+    for requirement in requirements:
+        cell = scores.get(requirement.requirement_id)
+        if cell is None:
+            continue
+        categories.append(
+            WinnerCategory(
+                label=type_labels.get(requirement.requirement_type, requirement.requirement_type),
+                score=int(cell.score),
+            )
+        )
+    return WinnerSummary(
+        supplier_name=row.supplier_name,
+        final_score=row.final_score,
+        price_amount=row.price_amount,
+        categories=tuple(categories),
+    )
 
 
 def _neg(value: Decimal | None) -> Decimal:

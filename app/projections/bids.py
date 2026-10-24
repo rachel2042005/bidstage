@@ -60,11 +60,13 @@ class SupplierBidView:
 
 @dataclass(frozen=True)
 class RequirementScoreView:
-    requirement_id: str
-    weight: int
-    is_threshold: bool
-    agent_score: int
+    """One requirement score. Category cells only need score and weight."""
+
     score: int
+    weight: int
+    requirement_id: str = ""
+    is_threshold: bool = False
+    agent_score: int = 0
     override_score: int | None = None
     override_justification: str | None = None
 
@@ -82,14 +84,6 @@ class ComparisonRow:
     price_score: Decimal | None = None
     final_score: Decimal | None = None
     rank: int | None = None
-
-
-@dataclass(frozen=True)
-class RequirementScoreView:
-    """One cell from dbo.rm_requirement_score. Score is 0–10; weight is a percent."""
-
-    score: int
-    weight: int
 
 
 class BidsProjection(Protocol):
@@ -244,7 +238,16 @@ class InMemoryBidsProjection:
         )
 
     def apply_scores(self, bid_id: str, scores: list[dict]) -> None:
-        self._scores[bid_id] = [_score_view(item) for item in scores]
+        viewed = [_score_view(item) for item in scores]
+        self._scores[bid_id] = viewed
+        row = self._comparison.get(bid_id)
+        if row is None:
+            return
+        stored = self._requirement_scores.setdefault(row.tender_id, {}).setdefault(bid_id, {})
+        for item in viewed:
+            if not item.requirement_id:
+                continue
+            stored[item.requirement_id] = RequirementScoreView(score=item.score, weight=item.weight)
 
     def scores_for(self, bid_id: str) -> list[RequirementScoreView]:
         return list(self._scores.get(bid_id, []))

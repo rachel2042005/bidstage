@@ -52,8 +52,7 @@
         <span class="badge text-bg-secondary">{{ status_labels[tender.status] }}</span>
       </div>
       <div class="small text-muted">
-        <span class="ltr-numeric">{{ tender.bid_count }}</span> הצעות
-        {% if tender.deadline %}
+        <span class="ltr-numeric">{{ tender.bid_count }}</span> הצעות{% if tender.status == 'decided' %}{% if tender.winner_name %} • זוכה: {{ tender.winner_name }}{% endif %}{% elif tender.deadline %}
         · הגשה עד <span class="ltr-numeric">{{ tender.deadline|local_dt }}</span>
         {% if countdown %}
         · <span class="countdown" data-deadline="{{ tender.deadline.isoformat() }}"></span>

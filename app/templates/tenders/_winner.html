@@ -1,0 +1,23 @@
+{% if winner %}
+<section id="winner-summary" class="winner-summary" aria-label="הספק הזוכה">
+  <p class="winner-kicker">המכרז הוכרע</p>
+  <p class="winner-label">שם הספק הזוכה</p>
+  <h2 class="winner-name">{{ winner.supplier_name }}</h2>
+  <dl class="winner-grid">
+    <div>
+      <dt>ציון סופי <span class="winner-range ltr-numeric">0–100</span></dt>
+      <dd class="ltr-numeric">{{ winner.final_score }}</dd>
+    </div>
+    <div>
+      <dt>מחיר ההצעה</dt>
+      <dd class="ltr-numeric">₪{{ winner.price_amount|shekels }}</dd>
+    </div>
+    {% for category in winner.categories %}
+    <div>
+      <dt>{{ category.label }}</dt>
+      <dd class="ltr-numeric">{{ category.score }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+</section>
+{% endif %}

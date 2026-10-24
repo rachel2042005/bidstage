@@ -9,6 +9,7 @@
   <a href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id) }}">השוואת הצעות</a>
 </nav>
 {% endif %}
+{% include "tenders/_winner.html" %}
 <div class="card card-body mb-4">
 <p class="mb-1">
   <span class="badge text-bg-secondary">{{ status_labels[details.tender.status] }}</span>

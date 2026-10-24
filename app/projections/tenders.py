@@ -216,6 +216,7 @@ class DashboardEntry:
     status: str
     deadline: datetime | None
     bid_count: int
+    winner_name: str | None = None
 
 
 @dataclass(frozen=True)

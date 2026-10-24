@@ -18,10 +18,15 @@ from app.domain.tender import (
     TenderNotFoundError,
 )
 from app.domain.user import ORGANIZER, DomainError
-from app.queries.get_bid_comparison import get_bid_comparison, get_requirement_scores
+from app.queries.get_bid_comparison import (
+    build_winner_summary,
+    get_bid_comparison,
+    get_requirement_scores,
+)
 from app.queries.get_tender import get_tender_details
 from app.routes.access import current_user_id, require_role
 from app.routes.services import unit_of_work
+from app.routes.tenders import REQUIREMENT_TYPE_LABELS
 
 bp = Blueprint("comparison", __name__)
 
@@ -50,11 +55,19 @@ def comparison(tender_id: str):
         rows = get_bid_comparison(bids, tender_id, sort=sort or None)
         category_scores = get_requirement_scores(bids, tender_id)
     revealed = any(row.price_amount is not None for row in rows)
+    winner = build_winner_summary(
+        details.tender,
+        details.requirements,
+        rows,
+        category_scores,
+        REQUIREMENT_TYPE_LABELS,
+    )
     return render_template(
         "tenders/comparison.html",
         details=details,
         rows=rows,
         category_scores=category_scores,
+        winner=winner,
         revealed=revealed,
         can_reveal=details.tender.status == UNDER_EVALUATION and not revealed,
         can_decide=details.tender.status == UNDER_EVALUATION and revealed,

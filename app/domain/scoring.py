@@ -115,7 +115,6 @@ def assess(marks: list[RequirementMark]) -> tuple[Decimal, str | None, str | Non
     return quality, None, None
 
 
-def rank_bids(bids: list[QualifiedBid], alpha: Decimal) -> list[RankedBid]:
 def rank_bids(
     bids: Sequence[QualifiedBid] | Sequence[Standing],
     alpha: Decimal | float,

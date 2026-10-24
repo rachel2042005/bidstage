@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 
 from flask import Blueprint, render_template, request
 
 from app.domain.tender import EVENT_TYPES, OPEN
 from app.domain.user import ORGANIZER, SUPPLIER
+from app.queries.get_bid_comparison import (
+    build_winner_summary,
+    get_bid_comparison,
+    get_requirement_scores,
+)
 from app.queries.get_dashboard import Dashboard, get_dashboard
+from app.queries.get_tender import get_tender_details
 from app.queries.search_tenders import search_tenders
 from app.routes.access import current_user_id, require_role
 from app.routes.services import unit_of_work
@@ -25,8 +32,9 @@ def home():
 @require_role(ORGANIZER)
 def organizer_home():
     keyword = request.args.get("q", "").strip()
-    with unit_of_work() as (_store, _users, tenders, _bids):
+    with unit_of_work() as (_store, _users, tenders, bids):
         dashboard = get_dashboard(tenders, current_user_id() or "")
+        dashboard = _with_winner_names(dashboard, tenders, bids)
     if keyword:
         dashboard = _filter_dashboard(dashboard, keyword)
     return render_template(
@@ -68,6 +76,25 @@ def supplier_home():
             "event_date_to": request.args.get("event_date_to", ""),
         },
     )
+
+
+def _with_winner_names(dashboard: Dashboard, tenders, bids) -> Dashboard:
+    """Use the same winner summary as the details card, so the name cannot drift."""
+    named = []
+    for entry in dashboard.decided:
+        details = get_tender_details(tenders, entry.tender_id)
+        summary = None
+        if details is not None:
+            summary = build_winner_summary(
+                details.tender,
+                details.requirements,
+                get_bid_comparison(bids, entry.tender_id),
+                get_requirement_scores(bids, entry.tender_id),
+                {},
+            )
+        winner_name = None if summary is None else summary.supplier_name
+        named.append(replace(entry, winner_name=winner_name))
+    return replace(dashboard, decided=tuple(named))
 
 
 def _filter_dashboard(dashboard: Dashboard, keyword: str) -> Dashboard:

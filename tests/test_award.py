@@ -189,6 +189,53 @@ def test_select_winner_rejects_a_disqualified_bid_and_returns_both_emails():
         )
 
 
+def test_decided_tender_shows_the_winner_on_the_detail_and_comparison_pages(client, backend):
+    store, users, tenders, bids = backend
+    _people(users)
+    tender_id, bid_a, _bid_b, _content_id = _publish_rank(store, tenders, bids)
+    _sign_in(client, ORGANIZER, user_id="org-1")
+
+    class _Silent:
+        def send(self, to: str, subject: str, body: str) -> None:
+            return None
+
+    client.application.extensions["bid_notifier"] = _Silent()
+    sealed_comparison = client.get(f"/organizer/tenders/{tender_id}/comparison").get_data(as_text=True)
+    sealed_detail = client.get(f"/organizer/tenders/{tender_id}").get_data(as_text=True)
+    assert 'id="winner-summary"' not in sealed_comparison
+    assert 'id="winner-summary"' not in sealed_detail
+
+    awarded = client.post(
+        f"/organizer/tenders/{tender_id}/winner",
+        data={"bid_id": bid_a},
+        follow_redirects=True,
+    )
+    assert awarded.status_code == 200
+    for body in (
+        awarded.get_data(as_text=True),
+        client.get(f"/organizer/tenders/{tender_id}").get_data(as_text=True),
+    ):
+        card = body.split('id="winner-summary"', 1)[1].split("</section>", 1)[0]
+        assert "שם הספק הזוכה" in card
+        assert "ספק א" in card
+        assert "ציון סופי" in card
+        assert "82.1" in card
+        assert "מחיר ההצעה" in card
+        assert "900,000.00" in card
+        assert "מקום" in card
+        assert "תוכן" in card
+        assert ">9<" in card
+        assert ">8<" in card
+        assert "ציון מחיר" not in card
+        assert "איכות" not in card
+        assert "winner-grid" in card
+
+    home = client.get("/organizer/").get_data(as_text=True)
+    decided = home.split('id="group-decided"', 1)[1].split('id="group-failed"', 1)[0]
+    assert "2</span> הצעות • זוכה: ספק א" in decided
+    assert "הגשה עד" not in decided
+
+
 def test_owner_can_award_and_others_get_403(client, backend):
     store, users, tenders, bids = backend
     _people(users)
