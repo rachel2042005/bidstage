@@ -23,6 +23,7 @@ from app.events.event_types import (
     TENDER_PUBLISHED,
     FINAL_RANKING_CALCULATED,
     PRICES_REVEALED,
+    WINNER_SELECTED,
 )
 
 CULTURE = "culture"
@@ -120,6 +121,26 @@ class BidsNotAssessedError(DomainError):
     pass
 
 
+class EmptyJustificationError(DomainError):
+    pass
+
+
+class ScoreOutOfRangeError(DomainError):
+    pass
+
+
+class RequirementNotScoredError(DomainError):
+    pass
+
+
+class BidNotQualifiedError(DomainError):
+    pass
+
+
+class TenderAlreadyDecidedError(DomainError):
+    pass
+
+
 class IllegalEventOrderError(DomainError):
     pass
 
@@ -150,6 +171,7 @@ class TenderState:
     closed_at: datetime | None = None
     failed_at: datetime | None = None
     prices_revealed: bool = False
+    winner_bid_id: str | None = None
 
     @property
     def weight_total(self) -> int:
@@ -161,6 +183,8 @@ class TenderState:
             return ""
         if self.failed_at is not None:
             return FAILED
+        if self.winner_bid_id:
+            return DECIDED
         if self.closed_at is not None:
             return UNDER_EVALUATION
         if self.published_at is not None:
@@ -294,6 +318,10 @@ def apply_tender(state: TenderState, event: StoredEvent) -> TenderState:
         if not state.prices_revealed:
             raise IllegalEventOrderError("FinalRankingCalculated before PricesRevealed")
         return state
+    if event.event_type == WINNER_SELECTED:
+        if not state.prices_revealed or state.winner_bid_id:
+            raise IllegalEventOrderError("WinnerSelected is out of order")
+        return _copy(state, winner_bid_id=str(event.event_data["bid_id"]))
     raise UnknownEventTypeError(event.event_type)
 
 
@@ -391,6 +419,7 @@ def _copy(state: TenderState, **changes) -> TenderState:
         closed_at=state.closed_at,
         failed_at=state.failed_at,
         prices_revealed=state.prices_revealed,
+        winner_bid_id=state.winner_bid_id,
     )
     values.update(changes)
     return TenderState(**values)

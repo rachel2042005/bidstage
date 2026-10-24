@@ -8,6 +8,8 @@ from flask import Blueprint, abort, current_app, flash, redirect, render_templat
 
 from app.commands.submit_bid import BidResponse, SubmitBid, submit_bid
 from app.domain.bid import (
+    DISQUALIFIED,
+    QUALIFIED,
     SUBMITTED,
     ActiveBidExistsError,
     DeadlinePassedError,
@@ -18,12 +20,18 @@ from app.domain.bid import (
 from app.domain.tender import TenderNotFoundError
 from app.domain.user import SUPPLIER, DomainError
 from app.queries.get_bid import list_supplier_bids
+from app.queries.get_tender import get_tender_details
+from app.routes.tenders import REQUIREMENT_TYPE_LABELS
 from app.routes.access import current_user_id, require_role
 from app.routes.services import unit_of_work
 
 bp = Blueprint("bids", __name__)
 
-BID_STATUS_LABELS = {SUBMITTED: "הוגשה"}
+BID_STATUS_LABELS = {
+    SUBMITTED: "הוגשה",
+    QUALIFIED: "כשירה",
+    DISQUALIFIED: "נפסלה",
+}
 
 
 @bp.get("/supplier/bids")
@@ -35,6 +43,41 @@ def my_bids():
     return render_template(
         "supplier/bids.html",
         bids=rows,
+        bid_status_labels=BID_STATUS_LABELS,
+    )
+
+
+@bp.get("/supplier/bids/<bid_id>")
+@require_role(SUPPLIER)
+def bid_detail(bid_id: str):
+    supplier_id = current_user_id() or ""
+    with unit_of_work() as (_store, _users, tenders, bids):
+        assessment = bids.assessment(bid_id)
+        if assessment is None:
+            abort(404)
+        own = next((row for row in bids.for_supplier(supplier_id) if row.bid_id == bid_id), None)
+        if own is None:
+            abort(403)
+        details = get_tender_details(tenders, assessment.tender_id)
+        scores = bids.scores_for(bid_id)
+        ranking = next(
+            (row for row in bids.comparison_for(assessment.tender_id) if row.bid_id == bid_id),
+            None,
+        )
+    labels = {}
+    if details is not None:
+        labels = {
+            item.requirement_id: REQUIREMENT_TYPE_LABELS.get(item.requirement_type, item.requirement_type)
+            for item in details.requirements
+        }
+    return render_template(
+        "supplier/bid.html",
+        bid=own,
+        assessment=assessment,
+        scores=scores,
+        ranking=ranking,
+        requirement_labels=labels,
+        revealed=ranking is not None and ranking.price_amount is not None,
         bid_status_labels=BID_STATUS_LABELS,
     )
 

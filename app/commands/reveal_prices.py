@@ -43,6 +43,7 @@ class _Verdict:
     quality: Decimal | None
     price_amount: int
     submitted_at: datetime
+    scores: tuple = ()
 
 
 def reveal_prices(store, tenders, bids, command: RevealPrices, *, now: datetime | None = None) -> None:
@@ -74,6 +75,10 @@ def reveal_prices(store, tenders, bids, command: RevealPrices, *, now: datetime 
         store.append(command.tender_id, version, TENDER_FAILED, failed, metadata)
         tenders.apply_failed(command.tender_id, failed)
         return
+
+    for row, verdict in verdicts:
+        if verdict.scores:
+            bids.apply_scores(row.bid_id, [_revealed_score(item) for item in verdict.scores])
 
     ranked = rank_bids(
         [
@@ -114,22 +119,36 @@ def _terminal(events, submitted_at: datetime) -> _Verdict | None:
     quality: Decimal | None = None
     disqualified = False
     price: int | None = None
+    scores: tuple = ()
     for event in events:
         if event.event_type == PRICE_OFFER_SEALED:
             price = int(event.event_data["price_amount"])
         elif event.event_type == QUALITY_ASSESSMENT_COMPLETED:
             quality = Decimal(str(event.event_data["quality_score"]))
             disqualified = False
+            scores = tuple(event.event_data.get("requirement_scores") or ())
         elif event.event_type == BID_DISQUALIFIED:
             disqualified = True
             quality = None
     if price is None:
         return None
     if disqualified:
-        return _Verdict(False, None, price, submitted_at)
+        return _Verdict(False, None, price, submitted_at, scores)
     if quality is None:
         return None
-    return _Verdict(True, quality, price, submitted_at)
+    return _Verdict(True, quality, price, submitted_at, scores)
+
+
+def _revealed_score(item: dict) -> dict:
+    return {
+        "requirement_id": item["requirement_id"],
+        "weight": int(item["weight"]),
+        "is_threshold": bool(item["is_threshold"]),
+        "agent_score": int(item["score"]),
+        "score": int(item["score"]),
+        "override_score": None,
+        "override_justification": None,
+    }
 
 
 def _utc(now: datetime | None) -> datetime:

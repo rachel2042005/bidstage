@@ -59,6 +59,17 @@ class SupplierBidView:
 
 
 @dataclass(frozen=True)
+class RequirementScoreView:
+    requirement_id: str
+    weight: int
+    is_threshold: bool
+    agent_score: int
+    score: int
+    override_score: int | None = None
+    override_justification: str | None = None
+
+
+@dataclass(frozen=True)
 class ComparisonRow:
     bid_id: str
     tender_id: str
@@ -88,6 +99,10 @@ class BidsProjection(Protocol):
 
     def clear(self) -> None: ...
 
+    def apply_scores(self, bid_id: str, scores: list[dict]) -> None: ...
+
+    def scores_for(self, bid_id: str) -> list[RequirementScoreView]: ...
+
 
 class InMemoryBidsProjection:
     def __init__(self) -> None:
@@ -95,6 +110,7 @@ class InMemoryBidsProjection:
         self._supplier: dict[str, SupplierBidView] = {}
         self._counts: dict[str, int] = {}
         self._comparison: dict[str, ComparisonRow] = {}
+        self._scores: dict[str, list[RequirementScoreView]] = {}
 
     def apply_submitted(
         self, bid_id: str, data: dict, *, tender_name: str, submitted_at: datetime, supplier_name: str = ""
@@ -182,11 +198,18 @@ class InMemoryBidsProjection:
             for row in self._supplier.values()
         )
 
+    def apply_scores(self, bid_id: str, scores: list[dict]) -> None:
+        self._scores[bid_id] = [_score_view(item) for item in scores]
+
+    def scores_for(self, bid_id: str) -> list[RequirementScoreView]:
+        return list(self._scores.get(bid_id, []))
+
     def clear(self) -> None:
         self._assessment.clear()
         self._supplier.clear()
         self._counts.clear()
         self._comparison.clear()
+        self._scores.clear()
 
 
 CREATE_RM_BID_FOR_ASSESSMENT = """
@@ -257,6 +280,30 @@ ELSE
 IF COL_LENGTH('dbo.rm_dashboard', 'bid_count') IS NULL
     ALTER TABLE dbo.rm_dashboard ADD bid_count INT NOT NULL
         CONSTRAINT df_rm_dashboard_bid_count DEFAULT 0;
+"""
+
+CREATE_RM_REQUIREMENT_SCORE = """
+IF NOT EXISTS (
+    SELECT 1 FROM sys.tables
+    WHERE name = 'rm_requirement_score' AND schema_id = SCHEMA_ID('dbo')
+)
+BEGIN
+    CREATE TABLE dbo.rm_requirement_score (
+        bid_id                  VARCHAR(100)  NOT NULL,
+        requirement_id          VARCHAR(100)  NOT NULL,
+        weight                  INT           NOT NULL
+            CONSTRAINT df_rm_requirement_score_weight DEFAULT 0,
+        is_threshold            BIT           NOT NULL
+            CONSTRAINT df_rm_requirement_score_is_threshold DEFAULT 0,
+        agent_score             INT           NOT NULL
+            CONSTRAINT df_rm_requirement_score_agent_score DEFAULT 0,
+        score                   INT           NOT NULL
+            CONSTRAINT df_rm_requirement_score_score DEFAULT 0,
+        override_score          INT           NULL,
+        override_justification  NVARCHAR(MAX) NULL,
+        CONSTRAINT pk_rm_requirement_score PRIMARY KEY (bid_id, requirement_id)
+    );
+END
 """
 
 CREATE_RM_BID_RANKING = """
@@ -395,7 +442,54 @@ class SqlBidsProjection:
         cursor.execute("DELETE FROM dbo.rm_bid_for_assessment")
         cursor.execute("DELETE FROM dbo.rm_supplier_bid")
         cursor.execute("DELETE FROM dbo.rm_bid_ranking")
+        cursor.execute(
+            "IF OBJECT_ID('dbo.rm_requirement_score', 'U') IS NOT NULL "
+            "DELETE FROM dbo.rm_requirement_score"
+        )
         cursor.close()
+
+    def apply_scores(self, bid_id: str, scores: list[dict]) -> None:
+        cursor = self._conn.cursor()
+        cursor.execute("DELETE FROM dbo.rm_requirement_score WHERE bid_id = ?", bid_id)
+        for item in scores:
+            cursor.execute(
+                "INSERT INTO dbo.rm_requirement_score "
+                "(bid_id, requirement_id, weight, is_threshold, agent_score, score, "
+                "override_score, override_justification) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                bid_id,
+                item["requirement_id"],
+                int(item["weight"]),
+                1 if item["is_threshold"] else 0,
+                int(item["agent_score"]),
+                int(item["score"]),
+                item["override_score"],
+                item["override_justification"],
+            )
+        cursor.close()
+
+    def scores_for(self, bid_id: str) -> list[RequirementScoreView]:
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "SELECT requirement_id, weight, is_threshold, agent_score, score, "
+            "override_score, override_justification "
+            "FROM dbo.rm_requirement_score WHERE bid_id = ? ORDER BY requirement_id",
+            bid_id,
+        )
+        rows = [
+            RequirementScoreView(
+                requirement_id=str(row[0]),
+                weight=int(row[1]),
+                is_threshold=bool(row[2]),
+                agent_score=int(row[3]),
+                score=int(row[4]),
+                override_score=None if row[5] is None else int(row[5]),
+                override_justification=None if row[6] is None else str(row[6]),
+            )
+            for row in cursor.fetchall()
+        ]
+        cursor.close()
+        return rows
 
     def comparison_for(self, tender_id: str) -> list[ComparisonRow]:
         cursor = self._conn.cursor()
@@ -458,6 +552,7 @@ def create_bids_projection(conn: pyodbc.Connection) -> None:
     cursor.execute(CREATE_RM_DASHBOARD)
     cursor.execute(ADD_DASHBOARD_COLUMNS)
     cursor.execute(CREATE_RM_BID_RANKING)
+    cursor.execute(CREATE_RM_REQUIREMENT_SCORE)
     cursor.close()
     ensure_read_model_schema(conn)
 
@@ -490,17 +585,70 @@ def rebuild_bids(store, bids: BidsProjection) -> None:
             if pending_prices is None:
                 raise UnknownEventTypeError(event.event_type)
             bids.apply_revealed(event.event_data["ranking"], pending_prices)
-            pending_prices = None
+        elif event.event_type == QUALITY_ASSESSMENT_COMPLETED:
+            scores = event.event_data.get("requirement_scores") or []
+            if scores and pending is None:
+                bids.apply_scores(event.stream_id, [_assessment_score(item) for item in scores])
+        elif event.event_type == SCORE_OVERRIDDEN:
+            current = {item.requirement_id: item for item in bids.scores_for(event.stream_id)}
+            requirement_id = event.event_data["requirement_id"]
+            if requirement_id in current:
+                row = current[requirement_id]
+                current[requirement_id] = replace(
+                    row,
+                    score=int(event.event_data["new_score"]),
+                    override_score=int(event.event_data["new_score"]),
+                    override_justification=str(event.event_data["justification"]),
+                )
+                bids.apply_scores(
+                    event.stream_id,
+                    [
+                        {
+                            "requirement_id": item.requirement_id,
+                            "weight": item.weight,
+                            "is_threshold": item.is_threshold,
+                            "agent_score": item.agent_score,
+                            "score": item.score,
+                            "override_score": item.override_score,
+                            "override_justification": item.override_justification,
+                        }
+                        for item in current.values()
+                    ],
+                )
         elif event.event_type in (
             REQUIREMENT_SCORED,
-            QUALITY_ASSESSMENT_COMPLETED,
             BID_DISQUALIFIED,
-            SCORE_OVERRIDDEN,
             BID_WITHDRAWN,
         ):
             continue
         elif event.event_type in BID_EVENTS:
             raise UnknownEventTypeError(event.event_type)
+
+
+def _score_view(item: dict) -> RequirementScoreView:
+    override = item.get("override_score")
+    note = item.get("override_justification")
+    return RequirementScoreView(
+        requirement_id=str(item["requirement_id"]),
+        weight=int(item["weight"]),
+        is_threshold=bool(item["is_threshold"]),
+        agent_score=int(item["agent_score"]),
+        score=int(item["score"]),
+        override_score=None if override is None else int(override),
+        override_justification=None if note is None else str(note),
+    )
+
+
+def _assessment_score(item: dict) -> dict:
+    return {
+        "requirement_id": item["requirement_id"],
+        "weight": int(item["weight"]),
+        "is_threshold": bool(item["is_threshold"]),
+        "agent_score": int(item["score"]),
+        "score": int(item["score"]),
+        "override_score": None,
+        "override_justification": None,
+    }
 
 
 def _comparison_row(row) -> ComparisonRow:
