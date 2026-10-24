@@ -134,6 +134,7 @@ class SqlCompleteAssessmentHandler:
                 command.reason,
                 command.failed_requirement_id,
             )
+        _project_comparison(self._conn, command)
         _complete_queue(self._conn, command.bid_id)
 
 
@@ -208,6 +209,18 @@ def _insert_requirement_score(
         item.requirement_id,
     )
     cursor.close()
+
+
+def _project_comparison(conn: pyodbc.Connection, command: QualityAssessmentCompleted | BidDisqualified) -> None:
+    """Copy the terminal quality onto the comparison row. The price stays sealed."""
+    from app.domain.bid import DISQUALIFIED, QUALIFIED
+    from app.projections.bids import SqlBidsProjection
+
+    if isinstance(command, QualityAssessmentCompleted):
+        status, quality = QUALIFIED, command.quality_score
+    else:
+        status, quality = DISQUALIFIED, command.quality_score
+    SqlBidsProjection(conn).apply_assessed(command.bid_id, status, quality)
 
 
 def _complete_queue(conn: pyodbc.Connection, bid_id: str) -> None:

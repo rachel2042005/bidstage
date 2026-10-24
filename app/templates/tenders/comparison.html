@@ -14,30 +14,86 @@
   </form>
   {% endif %}
 </div>
+<p class="text-muted small px-3 mb-2">ציוני הקטגוריות הם <span class="ltr-numeric">0–10</span> לפי משקל הדרישה. איכות, ציון מחיר וציון סופי הם <span class="ltr-numeric">0–100</span>.</p>
 <div class="table-responsive">
-<table class="table table-hover align-middle mb-0">
+<table class="table table-hover align-middle comparison-table mb-0">
   <thead>
     <tr>
-      <th>ספק</th>
-      <th>סטטוס</th>
-      <th><a href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id, sort='quality') }}">איכות</a></th>
-      <th><a href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id, sort='price') }}">מחיר</a></th>
-      <th>ציון מחיר</th>
-      <th><a href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id, sort='final') }}">ציון סופי</a></th>
+      <th class="col-text" scope="col">ספק</th>
+      <th class="col-text" scope="col">סטטוס</th>
+      {% for requirement in details.requirements %}
+      <th class="col-num" scope="col" title="{{ requirement.description }}">
+        <span class="col-label">{{ requirement_type_labels.get(requirement.requirement_type, requirement.requirement_type) }}</span>
+        <span class="col-meta ltr-numeric">{{ requirement.weight }}%</span>
+      </th>
+      {% endfor %}
+      <th class="col-num aggregate aggregate-start" scope="col">
+        <a class="col-label" href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id, sort='quality') }}">איכות</a>
+      </th>
+      <th class="col-num aggregate" scope="col">
+        <a class="col-label" href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id, sort='price') }}">מחיר</a>
+      </th>
+      <th class="col-num aggregate" scope="col"><span class="col-label">ציון מחיר</span></th>
+      <th class="col-num aggregate" scope="col">
+        <a class="col-label" href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id, sort='final') }}">ציון סופי</a>
+      </th>
     </tr>
   </thead>
   <tbody>
     {% for row in rows %}
+    {% set bid_scores = category_scores.get(row.bid_id, {}) %}
     <tr class="{% if row.status == 'disqualified' %}table-warning{% endif %}">
-      <td>{{ row.supplier_name }}</td>
-      <td>{{ bid_status_labels[row.status] }}</td>
-      <td class="ltr-numeric">{% if row.quality is none %}חסום{% else %}{{ row.quality }}{% endif %}</td>
-      <td class="ltr-numeric">{% if row.price_amount is none %}חסום{% else %}₪{{ row.price_amount|shekels }}{% endif %}</td>
-      <td class="ltr-numeric">{% if row.price_score is none %}חסום{% else %}{{ row.price_score }}{% endif %}</td>
-      <td class="ltr-numeric">{% if row.final_score is none %}חסום{% else %}{{ row.final_score }}{% endif %}{% if row.rank %} · {{ row.rank }}{% endif %}</td>
+      <td class="col-text">{{ row.supplier_name }}</td>
+      <td class="col-text">{{ bid_status_labels[row.status] }}</td>
+      {% for requirement in details.requirements %}
+      {% set cell = bid_scores.get(requirement.requirement_id) %}
+      <td class="col-num">
+        {% if cell %}
+        <span class="ltr-numeric">{{ cell.score }}</span>
+        {% elif row.status == 'disqualified' or row.quality is not none %}
+        —
+        {% else %}
+        חסום
+        {% endif %}
+      </td>
+      {% endfor %}
+      <td class="col-num aggregate aggregate-start">
+        {% if row.quality is not none %}
+        <span class="ltr-numeric">{{ row.quality }}</span>
+        {% elif row.status == 'disqualified' %}
+        —
+        {% else %}
+        חסום
+        {% endif %}
+      </td>
+      <td class="col-num aggregate">
+        {% if row.price_amount is none %}
+        חסום
+        {% else %}
+        <span class="ltr-numeric">₪{{ row.price_amount|shekels }}</span>
+        {% endif %}
+      </td>
+      <td class="col-num aggregate">
+        {% if row.price_score is not none %}
+        <span class="ltr-numeric">{{ row.price_score }}</span>
+        {% elif row.price_amount is not none %}
+        —
+        {% else %}
+        חסום
+        {% endif %}
+      </td>
+      <td class="col-num aggregate">
+        {% if row.final_score is not none %}
+        <span class="ltr-numeric">{{ row.final_score }}{% if row.rank %} · {{ row.rank }}{% endif %}</span>
+        {% elif revealed %}
+        —
+        {% else %}
+        חסום
+        {% endif %}
+      </td>
     </tr>
     {% else %}
-    <tr><td colspan="6">אין הצעות</td></tr>
+    <tr><td class="col-text" colspan="{{ 6 + details.requirements|length }}">אין הצעות</td></tr>
     {% endfor %}
   </tbody>
 </table>

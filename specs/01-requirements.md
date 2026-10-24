@@ -67,7 +67,7 @@ Administrator role and supplier approval workflow; payment or contracting after 
 
 | ID | Requirement |
 | --- | --- |
-| `FR-TBL-1` | An organizer sees a table of all bids for one tender: supplier, quality score, price, price score, final score, status. |
+| `FR-TBL-1` | An organizer sees a table of all bids for one tender: supplier, status, one column per requirement with its 0–10 score and weight, then quality score, price, price score, and final score. |
 | `FR-TBL-2` | The table is sortable by quality, price and final score. |
 | `FR-TBL-3` | Disqualified bids are shown but visually distinguished and excluded from ranking. |
 | `FR-TBL-4` | Before prices are revealed, the price columns render as "sealed" rather than empty. |

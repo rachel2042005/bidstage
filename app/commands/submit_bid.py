@@ -40,6 +40,7 @@ class SubmitBid:
     supplier_email: str = ""
     supplier_display_name: str = ""
     currency: str = CURRENCY
+    bid_id: str | None = None
 
 
 def submit_bid(
@@ -64,7 +65,7 @@ def submit_bid(
     if bids.has_active(command.tender_id, command.supplier_id):
         raise ActiveBidExistsError("this supplier already has an active bid")
 
-    bid_id = str(uuid.uuid4())
+    bid_id = (command.bid_id or "").strip() or str(uuid.uuid4())
     metadata = {"actor": command.supplier_id, "actor_role": "supplier"}
     submitted = {
         "tender_id": command.tender_id,

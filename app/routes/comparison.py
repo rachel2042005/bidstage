@@ -13,10 +13,11 @@ from app.domain.tender import (
     UNDER_EVALUATION,
     BidsNotAssessedError,
     NotTenderOwnerError,
+    TenderAlreadyClosedError,
     TenderNotFoundError,
 )
 from app.domain.user import ORGANIZER, DomainError
-from app.queries.get_bid_comparison import get_bid_comparison
+from app.queries.get_bid_comparison import get_bid_comparison, get_requirement_scores
 from app.queries.get_tender import get_tender_details
 from app.routes.access import current_user_id, require_role
 from app.routes.services import unit_of_work
@@ -46,11 +47,13 @@ def comparison(tender_id: str):
         if details.tender.status not in _COMPARISON_STATUSES:
             abort(403)
         rows = get_bid_comparison(bids, tender_id, sort=sort or None)
+        category_scores = get_requirement_scores(bids, tender_id)
     revealed = any(row.price_amount is not None for row in rows)
     return render_template(
         "tenders/comparison.html",
         details=details,
         rows=rows,
+        category_scores=category_scores,
         revealed=revealed,
         can_reveal=details.tender.status == UNDER_EVALUATION and not revealed,
         sort=sort,
@@ -77,6 +80,9 @@ def close(tender_id: str):
         abort(403)
     except TenderNotFoundError:
         abort(404)
+    except TenderAlreadyClosedError:
+        flash("המכרז כבר נסגר להגשות.", "success")
+        return redirect(url_for("tenders.organizer_tender", tender_id=tender_id))
     except DomainError as exc:
         flash(_close_message(exc), "danger")
         return redirect(url_for("tenders.organizer_tender", tender_id=tender_id))

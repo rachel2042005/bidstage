@@ -387,6 +387,8 @@ def test_owner_closes_an_open_tender_from_the_tender_page(client, backend):
     events = store.read_stream(tender_id)
     assert events[-1].event_type == TENDER_CLOSED_FOR_BIDS
     assert events[-1].event_data["bid_count"] == 1
+    comparison = client.get(f"/organizer/tenders/{tender_id}/comparison").get_data(as_text=True)
+    assert "סגור מכרז להגשות" not in comparison
 
 
 def test_closing_with_no_submitted_bids_shows_the_tender_as_failed(client, backend):
@@ -463,6 +465,15 @@ def test_dashboard_and_comparison_pages_hide_prices_until_reveal(client, backend
     assert "ספק ב" in sealed
     assert "900,000" not in sealed
     assert "700,000" not in sealed
+    assert "סגור מכרז להגשות" not in sealed
+    assert "מקום" in sealed
+    assert "100%" in sealed
+    assert "comparison-table" in sealed
+    assert 'td class="ltr-numeric"' not in sealed
+    header, _body = sealed.split("<tbody", 1)
+    first_row = _body.split("</tr>", 1)[0]
+    assert header.count("<th ") == 7
+    assert first_row.count("<td") == 7
 
     _sign_in(client, SUPPLIER, user_id="sup-a")
     forbidden = client.get(f"/organizer/tenders/{tender_id}/comparison")
@@ -495,6 +506,32 @@ def test_dashboard_and_comparison_pages_hide_prices_until_reveal(client, backend
     assert body.index("ספק ב") < body.index("ספק א")
     assert "84.4" in body
     assert "80.3" in body
+
+
+def test_comparison_renders_a_requirement_score_in_its_own_column(client, backend):
+    """FR-TBL-1. A stored category score is the cell under that requirement."""
+    from app.domain.user import ORGANIZER
+    from app.queries.get_tender import get_tender_details
+    from tests.test_tenders import _sign_in
+
+    store, _users, tenders, bids = backend
+    tender_id = _open(store, tenders)
+    bid_id = _bid(store, tenders, bids, tender_id)
+    details = get_tender_details(tenders, tender_id)
+    assert details is not None
+    requirement = details.requirements[0]
+    bids.remember_requirement_score(
+        tender_id, bid_id, requirement.requirement_id, score=7, weight=100
+    )
+    _sign_in(client, ORGANIZER)
+    client.post(f"/organizer/tenders/{tender_id}/close")
+    page = client.get(f"/organizer/tenders/{tender_id}/comparison").get_data(as_text=True)
+    assert "סגור מכרז להגשות" not in page
+    assert '<span class="col-label">מקום</span>' in page
+    assert '<span class="ltr-numeric">7</span>' in page
+    assert '<span class="col-meta ltr-numeric">100%</span>' in page
+    header, body = page.split("<tbody", 1)
+    assert header.count("<th ") == body.split("</tr>", 1)[0].count("<td")
 
 
 def test_dashboard_chart_payload_matches_the_groups_and_hides_other_organizers(client, backend):

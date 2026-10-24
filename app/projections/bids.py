@@ -73,6 +73,14 @@ class ComparisonRow:
     rank: int | None = None
 
 
+@dataclass(frozen=True)
+class RequirementScoreView:
+    """One cell from dbo.rm_requirement_score. Score is 0–10; weight is a percent."""
+
+    score: int
+    weight: int
+
+
 class BidsProjection(Protocol):
     def apply_submitted(
         self, bid_id: str, data: dict, *, tender_name: str, submitted_at: datetime, supplier_name: str = ""
@@ -96,6 +104,7 @@ class InMemoryBidsProjection:
         self._assessment: dict[str, AssessmentView] = {}
         self._supplier: dict[str, SupplierBidView] = {}
         self._comparison: dict[str, ComparisonRow] = {}
+        self._requirement_scores: dict[str, dict[str, dict[str, RequirementScoreView]]] = {}
 
     def apply_submitted(
         self, bid_id: str, data: dict, *, tender_name: str, submitted_at: datetime, supplier_name: str = ""
@@ -146,10 +155,38 @@ class InMemoryBidsProjection:
         self._supplier[bid_id] = replace(self._supplier[bid_id], status=WITHDRAWN)
         self._comparison[bid_id] = replace(self._comparison[bid_id], status=WITHDRAWN)
 
+    def apply_assessed(self, bid_id: str, status: str, quality: Decimal | float | None) -> None:
+        """Record the terminal quality. The sealed price stays unset."""
+        current = self._comparison.get(bid_id)
+        if current is None:
+            return
+        scored = None if quality is None else Decimal(str(quality))
+        self._comparison[bid_id] = replace(current, status=status, quality=scored)
+        supplier = self._supplier.get(bid_id)
+        if supplier is not None:
+            self._supplier[bid_id] = replace(supplier, status=status)
+
     def comparison_for(self, tender_id: str) -> list[ComparisonRow]:
         rows = [row for row in self._comparison.values() if row.tender_id == tender_id]
         rows.sort(key=lambda row: row.submitted_at)
         return rows
+
+    def requirement_scores_for(self, tender_id: str) -> dict[str, dict[str, RequirementScoreView]]:
+        stored = self._requirement_scores.get(tender_id, {})
+        return {bid_id: dict(scores) for bid_id, scores in stored.items()}
+
+    def remember_requirement_score(
+        self,
+        tender_id: str,
+        bid_id: str,
+        requirement_id: str,
+        score: int,
+        weight: int,
+    ) -> None:
+        """Test double for dbo.rm_requirement_score. The SQL projection reads the table."""
+        self._requirement_scores.setdefault(tender_id, {}).setdefault(bid_id, {})[requirement_id] = (
+            RequirementScoreView(score=score, weight=weight)
+        )
 
     def apply_revealed(self, ranking: list[dict], prices: list[dict]) -> None:
         price_of = {item["bid_id"]: int(item["amount"]) for item in prices}
@@ -194,6 +231,7 @@ class InMemoryBidsProjection:
         self._assessment.clear()
         self._supplier.clear()
         self._comparison.clear()
+        self._requirement_scores.clear()
 
 
 CREATE_RM_BID_FOR_ASSESSMENT = """
@@ -408,6 +446,22 @@ class SqlBidsProjection:
         )
         cursor.close()
 
+    def apply_assessed(self, bid_id: str, status: str, quality: Decimal | float | None) -> None:
+        """Record the terminal quality. Price columns stay null until reveal."""
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "UPDATE dbo.rm_bid_ranking SET status = ?, quality = ? WHERE bid_id = ?",
+            status,
+            None if quality is None else quality,
+            bid_id,
+        )
+        cursor.execute(
+            "UPDATE dbo.rm_supplier_bid SET status = ? WHERE bid_id = ?",
+            status,
+            bid_id,
+        )
+        cursor.close()
+
     def has_active(self, tender_id: str, supplier_id: str) -> bool:
         cursor = self._conn.cursor()
         cursor.execute(
@@ -439,6 +493,25 @@ class SqlBidsProjection:
         rows = [_comparison_row(row) for row in cursor.fetchall()]
         cursor.close()
         return rows
+
+    def requirement_scores_for(self, tender_id: str) -> dict[str, dict[str, RequirementScoreView]]:
+        """Category cells for one tender. Price is not on this table (NFR-AGT-4)."""
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "SELECT s.bid_id, s.requirement_id, s.score, s.weight "
+            "FROM dbo.rm_requirement_score AS s "
+            "INNER JOIN dbo.rm_requirement AS r ON r.requirement_id = s.requirement_id "
+            "WHERE r.tender_id = ?",
+            tender_id,
+        )
+        grouped: dict[str, dict[str, RequirementScoreView]] = {}
+        for bid_id, requirement_id, score, weight in cursor.fetchall():
+            grouped.setdefault(str(bid_id), {})[str(requirement_id)] = RequirementScoreView(
+                score=int(score),
+                weight=int(weight),
+            )
+        cursor.close()
+        return grouped
 
     def apply_revealed(self, ranking: list[dict], prices: list[dict]) -> None:
         price_of = {item["bid_id"]: int(item["amount"]) for item in prices}
@@ -524,12 +597,11 @@ def rebuild_bids(store, bids: BidsProjection) -> None:
             pending_prices = None
         elif event.event_type == BID_WITHDRAWN:
             bids.apply_withdrawn(event.stream_id)
-        elif event.event_type in (
-            REQUIREMENT_SCORED,
-            QUALITY_ASSESSMENT_COMPLETED,
-            BID_DISQUALIFIED,
-            SCORE_OVERRIDDEN,
-        ):
+        elif event.event_type == QUALITY_ASSESSMENT_COMPLETED:
+            bids.apply_assessed(event.stream_id, QUALIFIED, event.event_data.get("quality_score"))
+        elif event.event_type == BID_DISQUALIFIED:
+            bids.apply_assessed(event.stream_id, DISQUALIFIED, event.event_data.get("quality_score"))
+        elif event.event_type in (REQUIREMENT_SCORED, SCORE_OVERRIDDEN):
             continue
         elif event.event_type in BID_EVENTS:
             raise UnknownEventTypeError(event.event_type)

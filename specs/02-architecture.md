@@ -130,6 +130,7 @@ scripts/
   reset_vector_store.py       # drops collections after a provider change
   seed_knowledge_base.py      # embeds knowledge_base/ into rubrics and regulations
   seed.py                     # Phase 3: rebuilds SQL + Chroma (ENV-6)
+  seed_demo_data.py           # Phase 5: scored demo tenders on fixed stream ids
 tests/
   smoke_test_event_store.py
   test_auth.py
