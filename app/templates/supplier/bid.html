@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}ההצעה שלי · {{ bid.tender_name }}{% endblock %}
+{% block content %}
+<p class="mb-2"><a href="{{ url_for('bids.my_bids') }}">ההצעות שלי</a></p>
+<div class="card card-body mb-3">
+  <p class="mb-1"><span class="badge text-bg-secondary">{{ bid_status_labels[bid.status] }}</span></p>
+  <h1 class="h3">{{ bid.tender_name }}</h1>
+  <p class="mb-0">{{ assessment.concept }}</p>
+</div>
+<h2 class="h5">פירוט ציונים</h2>
+{% if scores %}
+<div class="table-responsive card mb-3">
+<table class="table align-middle mb-0">
+  <thead>
+    <tr>
+      <th>דרישה</th>
+      <th>משקל</th>
+      <th>ציון הסוכן</th>
+      <th>דריסה</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for score in scores %}
+    <tr>
+      <td>{{ requirement_labels.get(score.requirement_id, score.requirement_id) }}{% if score.is_threshold %} · סף{% endif %}</td>
+      <td class="ltr-numeric">{{ score.weight }}%</td>
+      <td class="ltr-numeric"><span class="agent-score">{{ score.agent_score }}</span></td>
+      <td>
+        {% if score.override_score is not none %}
+        <span class="override-score ltr-numeric">{{ score.override_score }}</span>
+        <div class="small text-muted">{{ score.override_justification }}</div>
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p>ההצעה טרם דורגה.</p>
+{% endif %}
+{% if ranking and ranking.quality is not none %}
+<p>ציון איכות: <span class="ltr-numeric">{{ ranking.quality }}</span></p>
+{% endif %}
+{% if revealed %}
+<p>מחיר: <span class="ltr-numeric">₪{{ ranking.price_amount|shekels }}</span></p>
+{% if ranking.price_score is not none %}
+<p>ציון מחיר: <span class="ltr-numeric">{{ ranking.price_score }}</span></p>
+{% endif %}
+{% if ranking.final_score is not none %}
+<p>ציון סופי: <span class="ltr-numeric">{{ ranking.final_score }}</span></p>
+{% endif %}
+{% else %}
+<p>המחיר חסום עד לפתיחת המעטפות.</p>
+{% endif %}
+{% endblock %}

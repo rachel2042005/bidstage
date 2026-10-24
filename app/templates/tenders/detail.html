@@ -2,6 +2,13 @@
 {% block title %}{{ details.tender.name }} · BidStage{% endblock %}
 {% block content %}
 <p class="mb-2"><a href="{{ back_url }}">{{ back_label }}</a></p>
+{% if show_comparison|default(false) %}
+<nav class="tender-steps mb-3" aria-label="שלבי המכרז">
+  <a href="{{ url_for('tenders.organizer_tender', tender_id=details.tender.tender_id) }}" aria-current="page">פרטי המכרז</a>
+  <span aria-hidden="true"> · </span>
+  <a href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id) }}">השוואת הצעות</a>
+</nav>
+{% endif %}
 <div class="card card-body mb-4">
 <p class="mb-1">
   <span class="badge text-bg-secondary">{{ status_labels[details.tender.status] }}</span>

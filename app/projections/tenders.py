@@ -13,7 +13,7 @@ from typing import Protocol
 
 import pyodbc
 
-from app.domain.tender import DRAFT, FAILED, OPEN, UNDER_EVALUATION
+from app.domain.tender import DECIDED, DRAFT, FAILED, OPEN, UNDER_EVALUATION
 from app.domain.user import UnknownEventTypeError
 from app.events.event_types import (
     FINAL_RANKING_CALCULATED,
@@ -25,6 +25,7 @@ from app.events.event_types import (
     TENDER_EVENTS,
     TENDER_FAILED,
     TENDER_PUBLISHED,
+    WINNER_SELECTED,
 )
 
 CREATE_RM_TENDER_SEARCH = """
@@ -204,6 +205,7 @@ _SUMMARY_COLUMNS = (
     "tender_id, organizer_id, name, event_type, event_date, region, deadline, "
     "status, alpha, budget_amount, budget_currency, published_at"
 )
+_READ_COLUMNS = _SUMMARY_COLUMNS + ", winner_bid_id"
 
 
 @dataclass(frozen=True)
@@ -230,6 +232,7 @@ class TenderSummary:
     budget_amount: int
     budget_currency: str
     published_at: datetime | None = None
+    winner_bid_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -267,6 +270,7 @@ class TendersProjection(Protocol):
     def increment_bid_count(self, tender_id: str) -> None: ...
     def apply_closed(self, tender_id: str, data: dict) -> None: ...
     def apply_failed(self, tender_id: str, data: dict) -> None: ...
+    def apply_decided(self, tender_id: str, winner_bid_id: str) -> None: ...
     def clear(self) -> None: ...
 
 
@@ -326,6 +330,13 @@ class InMemoryTendersProjection:
     def apply_failed(self, tender_id: str, data: dict) -> None:
         current = self._tenders[tender_id]
         self._tenders[tender_id] = replace(current, status=FAILED)
+        self._sync_dashboard(tender_id)
+
+    def apply_decided(self, tender_id: str, winner_bid_id: str) -> None:
+        current = self._tenders[tender_id]
+        self._tenders[tender_id] = replace(
+            current, status=DECIDED, winner_bid_id=winner_bid_id
+        )
         self._sync_dashboard(tender_id)
 
     def dashboard_for(self, organizer_id: str) -> list[DashboardEntry]:
@@ -505,6 +516,22 @@ class SqlTendersProjection:
     def apply_failed(self, tender_id: str, data: dict) -> None:
         self._set_dashboard_status(tender_id, FAILED)
 
+    def apply_decided(self, tender_id: str, winner_bid_id: str) -> None:
+        cursor = self._conn.cursor()
+        for table in ("dbo.rm_tender_search", "dbo.rm_tender_detail"):
+            cursor.execute(
+                f"UPDATE {table} SET status = ?, winner_bid_id = ? WHERE tender_id = ?",
+                DECIDED,
+                winner_bid_id,
+                tender_id,
+            )
+        cursor.execute(
+            "UPDATE dbo.rm_dashboard SET status = ? WHERE tender_id = ?",
+            DECIDED,
+            tender_id,
+        )
+        cursor.close()
+
     def dashboard_for(self, organizer_id: str) -> list[DashboardEntry]:
         cursor = self._conn.cursor()
         cursor.execute(
@@ -548,7 +575,7 @@ class SqlTendersProjection:
     def get(self, tender_id: str) -> TenderSummary | None:
         return _fetch_one(
             self._conn,
-            f"SELECT {_SUMMARY_COLUMNS} FROM dbo.rm_tender_detail WHERE tender_id = ?",
+            f"SELECT {_READ_COLUMNS} FROM dbo.rm_tender_detail WHERE tender_id = ?",
             tender_id,
         )
 
@@ -645,6 +672,8 @@ def project_tender_event(tenders: TendersProjection, event) -> None:
         tenders.apply_closed(event.stream_id, event.event_data)
     elif event.event_type == TENDER_FAILED:
         tenders.apply_failed(event.stream_id, event.event_data)
+    elif event.event_type == WINNER_SELECTED:
+        tenders.apply_decided(event.stream_id, event.event_data["bid_id"])
     elif event.event_type in (PRICES_REVEALED, FINAL_RANKING_CALCULATED):
         return
     elif event.event_type in TENDER_EVENTS:
@@ -786,7 +815,7 @@ def compile_search_sql(criteria: TenderSearch) -> tuple[str, list]:
         params.append(_like_contains(token.casefold()))
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     sql = (
-        f"SELECT {_SUMMARY_COLUMNS} FROM dbo.rm_tender_search"
+        f"SELECT {_READ_COLUMNS} FROM dbo.rm_tender_search"
         f"{where} ORDER BY event_date, name"
     )
     return sql, params
@@ -822,6 +851,7 @@ def _row_to_summary(row) -> TenderSummary:
         budget_amount=int(row[9]),
         budget_currency=str(row[10]).strip(),
         published_at=_aware(row[11]),
+        winner_bid_id=None if row[12] is None else str(row[12]),
     )
 
 

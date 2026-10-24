@@ -18,9 +18,14 @@ from app.notifications.receipt import BidReceipt
 class BidNotifier(Protocol):
     def bid_received(self, receipt: BidReceipt) -> None: ...
 
+    def send(self, to: str, subject: str, body: str) -> None: ...
+
 
 class NullBidNotifier:
     def bid_received(self, receipt: BidReceipt) -> None:
+        return None
+
+    def send(self, to: str, subject: str, body: str) -> None:
         return None
 
 
@@ -35,17 +40,16 @@ class GmailMcpNotifier:
         self._url = url
 
     def bid_received(self, receipt: BidReceipt) -> None:
+        self.send(receipt.to_email, receipt.subject, receipt.body)
+
+    def send(self, to: str, subject: str, body: str) -> None:
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "tools/call",
             "params": {
                 "name": "send_email",
-                "arguments": {
-                    "to": receipt.to_email,
-                    "subject": receipt.subject,
-                    "body": receipt.body,
-                },
+                "arguments": {"to": to, "subject": subject, "body": body},
             },
         }
         request = urllib.request.Request(

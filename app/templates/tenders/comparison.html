@@ -1,7 +1,11 @@
 {% extends "base.html" %}
 {% block title %}השוואת הצעות · {{ details.tender.name }}{% endblock %}
 {% block content %}
-<p class="mb-2"><a href="{{ url_for('tenders.organizer_tender', tender_id=details.tender.tender_id) }}">חזרה למכרז</a></p>
+<nav class="tender-steps mb-3" aria-label="שלבי המכרז">
+  <a href="{{ url_for('tenders.organizer_tender', tender_id=details.tender.tender_id) }}">פרטי המכרז</a>
+  <span aria-hidden="true"> · </span>
+  <a href="{{ url_for('comparison.comparison', tender_id=details.tender.tender_id) }}" aria-current="page">השוואת הצעות</a>
+</nav>
 <div class="card">
 <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-2">
   <div>
@@ -41,6 +45,16 @@
   </thead>
   <tbody>
     {% for row in rows %}
+    <tr class="{% if row.status == 'disqualified' %}table-warning{% elif details.tender.winner_bid_id == row.bid_id %}table-success{% endif %}">
+      <td>
+        {{ row.supplier_name }}
+        {% if details.tender.winner_bid_id == row.bid_id %}<span class="badge text-bg-success">זוכה</span>{% endif %}
+      </td>
+      <td>{{ bid_status_labels[row.status] }}</td>
+      <td class="ltr-numeric">{% if row.quality is none %}חסום{% else %}{{ row.quality }}{% endif %}</td>
+      <td class="ltr-numeric">{% if row.price_amount is none %}חסום{% else %}₪{{ row.price_amount|shekels }}{% endif %}</td>
+      <td class="ltr-numeric">{% if row.price_score is none %}חסום{% else %}{{ row.price_score }}{% endif %}</td>
+      <td class="ltr-numeric">{% if row.final_score is none %}חסום{% else %}{{ row.final_score }}{% endif %}{% if row.rank %} · {{ row.rank }}{% endif %}</td>
     {% set bid_scores = category_scores.get(row.bid_id, {}) %}
     <tr class="{% if row.status == 'disqualified' %}table-warning{% endif %}">
       <td class="col-text">{{ row.supplier_name }}</td>
@@ -92,6 +106,64 @@
         {% endif %}
       </td>
     </tr>
+    {% if scores[row.bid_id] %}
+    <tr>
+      <td colspan="6" class="bg-body-tertiary">
+        <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead>
+            <tr>
+              <th>דרישה</th>
+              <th>משקל</th>
+              <th>ציון הסוכן</th>
+              <th>דריסה</th>
+              {% if can_decide %}<th></th>{% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for score in scores[row.bid_id] %}
+            <tr>
+              <td>{{ requirement_labels.get(score.requirement_id, score.requirement_id) }}{% if score.is_threshold %} · סף{% endif %}</td>
+              <td class="ltr-numeric">{{ score.weight }}%</td>
+              <td class="ltr-numeric"><span class="agent-score">{{ score.agent_score }}</span></td>
+              <td class="override-score">
+                {% if score.override_score is not none %}
+                <span class="ltr-numeric">{{ score.override_score }}</span>
+                <div class="small text-muted">{{ score.override_justification }}</div>
+                {% else %}—{% endif %}
+              </td>
+              {% if can_decide %}
+              <td>
+                <form method="post" action="{{ url_for('comparison.override', tender_id=details.tender.tender_id, bid_id=row.bid_id) }}" class="row g-2 align-items-end">
+                  <input type="hidden" name="requirement_id" value="{{ score.requirement_id }}">
+                  <div class="col-auto">
+                    <label class="form-label mb-0" for="score-{{ row.bid_id }}-{{ score.requirement_id }}">ציון</label>
+                    <input class="form-control form-control-sm ltr-numeric" id="score-{{ row.bid_id }}-{{ score.requirement_id }}" name="new_score" type="number" min="0" max="10" required>
+                  </div>
+                  <div class="col">
+                    <label class="form-label mb-0" for="why-{{ row.bid_id }}-{{ score.requirement_id }}">נימוק</label>
+                    <input class="form-control form-control-sm" id="why-{{ row.bid_id }}-{{ score.requirement_id }}" name="justification" required>
+                  </div>
+                  <div class="col-auto">
+                    <button type="submit" class="btn btn-sm btn-outline-primary">דריסת ציון</button>
+                  </div>
+                </form>
+              </td>
+              {% endif %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        {% if can_decide and row.status == 'qualified' %}
+        <form method="post" action="{{ url_for('comparison.award', tender_id=details.tender.tender_id) }}" class="mt-2 mb-0">
+          <input type="hidden" name="bid_id" value="{{ row.bid_id }}">
+          <button type="submit" class="btn btn-sm btn-success">בחירת זוכה</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endif %}
     {% else %}
     <tr><td class="col-text" colspan="{{ 6 + details.requirements|length }}">אין הצעות</td></tr>
     {% endfor %}

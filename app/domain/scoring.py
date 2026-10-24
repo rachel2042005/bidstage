@@ -88,6 +88,34 @@ def present(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
 
 
+THRESHOLD_MARK = 6
+QUALITY_FLOOR = Decimal(60)
+
+
+@dataclass(frozen=True)
+class RequirementMark:
+    requirement_id: str
+    weight: int
+    is_threshold: bool
+    score: int
+
+
+def assess(marks: list[RequirementMark]) -> tuple[Decimal, str | None, str | None]:
+    """Quality, disqualification reason, and the failed threshold id.
+
+    Reason is None when the bid stays qualified. Thresholds are checked
+    before the quality floor (specs/04-scoring-model.md §4).
+    """
+    quality = Decimal(sum(mark.weight * mark.score for mark in marks)) / Decimal(10)
+    for mark in marks:
+        if mark.is_threshold and mark.score < THRESHOLD_MARK:
+            return quality, "threshold", mark.requirement_id
+    if quality < QUALITY_FLOOR:
+        return quality, "quality below 60", None
+    return quality, None, None
+
+
+def rank_bids(bids: list[QualifiedBid], alpha: Decimal) -> list[RankedBid]:
 def rank_bids(
     bids: Sequence[QualifiedBid] | Sequence[Standing],
     alpha: Decimal | float,

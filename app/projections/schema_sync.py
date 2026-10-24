@@ -27,6 +27,7 @@ _ADD_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("rm_tender_search", "budget_amount", "BIGINT NOT NULL CONSTRAINT {c} DEFAULT 0"),
     ("rm_tender_search", "budget_currency", "CHAR(3) NOT NULL CONSTRAINT {c} DEFAULT 'ILS'"),
     ("rm_tender_search", "published_at", "DATETIME2 NULL"),
+    ("rm_tender_search", "winner_bid_id", "VARCHAR(100) NULL"),
     ("rm_tender_search", "search_text", "NVARCHAR(MAX) NOT NULL CONSTRAINT {c} DEFAULT N''"),
     ("rm_tender_detail", "organizer_id", "VARCHAR(100) NOT NULL CONSTRAINT {c} DEFAULT ''"),
     ("rm_tender_detail", "name", "NVARCHAR(200) NOT NULL CONSTRAINT {c} DEFAULT N''"),
@@ -39,6 +40,7 @@ _ADD_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("rm_tender_detail", "budget_amount", "BIGINT NOT NULL CONSTRAINT {c} DEFAULT 0"),
     ("rm_tender_detail", "budget_currency", "CHAR(3) NOT NULL CONSTRAINT {c} DEFAULT 'ILS'"),
     ("rm_tender_detail", "published_at", "DATETIME2 NULL"),
+    ("rm_tender_detail", "winner_bid_id", "VARCHAR(100) NULL"),
     ("rm_requirement", "tender_id", "VARCHAR(100) NOT NULL CONSTRAINT {c} DEFAULT ''"),
     ("rm_requirement", "requirement_id", "VARCHAR(100) NULL"),
     ("rm_requirement", "requirement_type", "VARCHAR(20) NOT NULL CONSTRAINT {c} DEFAULT ''"),
@@ -88,6 +90,10 @@ _ADD_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("rm_bid_assessment", "failed_requirement_id", "VARCHAR(100) NULL"),
     ("rm_requirement_score", "score", "INT NOT NULL CONSTRAINT {c} DEFAULT 0"),
     ("rm_requirement_score", "weight", "INT NOT NULL CONSTRAINT {c} DEFAULT 0"),
+    ("rm_requirement_score", "is_threshold", "BIT NOT NULL CONSTRAINT {c} DEFAULT 0"),
+    ("rm_requirement_score", "agent_score", "INT NOT NULL CONSTRAINT {c} DEFAULT 0"),
+    ("rm_requirement_score", "override_score", "INT NULL"),
+    ("rm_requirement_score", "override_justification", "NVARCHAR(MAX) NULL"),
 )
 
 # Columns the commands assign NULL, or that must stay empty until a later event

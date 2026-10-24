@@ -5,7 +5,7 @@
 {% if bids %}
 <div class="vstack gap-3">
   {% for bid in bids %}
-  <a class="card card-body text-decoration-none text-body" href="{{ url_for('tenders.supplier_tender', tender_id=bid.tender_id) }}">
+  <a class="card card-body text-decoration-none text-body" href="{{ url_for('bids.bid_detail', bid_id=bid.bid_id) }}">
     <div class="d-flex justify-content-between align-items-center">
       <strong>{{ bid.tender_name }}</strong>
       <span class="badge text-bg-secondary">{{ bid_status_labels[bid.status] }}</span>
